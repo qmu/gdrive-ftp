@@ -7,7 +7,92 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"gdrive-ftp/internal/gdrive"
 )
+
+// drive stacks used across the virtual-root path tests.
+var (
+	rootStack    []gdrive.Ref // virtual root
+	myDriveStack = []gdrive.Ref{{ID: gdrive.RootID, Name: myDriveName, DriveID: ""}}
+	sharedStack  = []gdrive.Ref{
+		{ID: "d1", Name: "Team", DriveID: "d1"},
+		{ID: "f1", Name: "sub", DriveID: "d1"},
+	}
+)
+
+func TestPwd(t *testing.T) {
+	tests := []struct {
+		name string
+		cwd  []gdrive.Ref
+		want string
+	}{
+		{"virtual root", rootStack, "/"},
+		{"my drive", myDriveStack, "/My Drive"},
+		{"shared drive subfolder", sharedStack, "/Team/sub"},
+	}
+	for _, tt := range tests {
+		s := &Shell{cwd: tt.cwd}
+		if got := s.pwd(); got != tt.want {
+			t.Errorf("%s: pwd() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCurrentID(t *testing.T) {
+	tests := []struct {
+		name  string
+		stack []gdrive.Ref
+		want  string
+	}{
+		{"virtual root has no folder", rootStack, ""},
+		{"my drive root", myDriveStack, gdrive.RootID},
+		{"shared drive tip", sharedStack, "f1"},
+	}
+	for _, tt := range tests {
+		if got := currentID(tt.stack); got != tt.want {
+			t.Errorf("%s: currentID() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCurrentDriveID(t *testing.T) {
+	tests := []struct {
+		name  string
+		stack []gdrive.Ref
+		want  string
+	}{
+		{"virtual root", rootStack, ""},
+		{"my drive uses default corpus", myDriveStack, ""},
+		{"shared drive carries id from first element", sharedStack, "d1"},
+	}
+	for _, tt := range tests {
+		if got := currentDriveID(tt.stack); got != tt.want {
+			t.Errorf("%s: currentDriveID() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestSingleDriveArg(t *testing.T) {
+	tests := []struct {
+		name string
+		cwd  []gdrive.Ref
+		arg  string
+		want bool
+	}{
+		{"bare name at virtual root", rootStack, "Team", true},
+		{"absolute single component", myDriveStack, "/Team", true},
+		{"bare name inside a drive", myDriveStack, "Reports", false},
+		{"multi-component absolute", rootStack, "/Team/sub", false},
+		{"root slash is not a drive", rootStack, "/", false},
+	}
+	for _, tt := range tests {
+		s := &Shell{cwd: tt.cwd}
+		if got := s.singleDriveArg(tt.arg); got != tt.want {
+			t.Errorf("%s: singleDriveArg(%q) = %v, want %v", tt.name, tt.arg, got, tt.want)
+		}
+	}
+}
 
 func TestTokenize(t *testing.T) {
 	tests := []struct {

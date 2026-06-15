@@ -5,20 +5,28 @@ familiar interactive shell — `ls`, `cd`, `pwd`, `get` (download), `put`
 (upload), `mkdir`, `rm` — that talks to your Drive over the official Drive v3
 API.
 
+The shell opens at a **virtual root** that lists *My Drive* alongside every
+Shared Drive you can access; the drive name is the first component of every path.
+
 ```
 $ gdrive-ftp
 Connected to Google Drive. Type 'help' for commands, 'quit' to exit.
 gdrive:/> ls
+           -                    My Drive/
+           -                    Engineering Team/
+gdrive:/> cd "My Drive"
+gdrive:/My Drive> ls
            -  2026-05-01 09:12  Photos/
            -  2026-04-22 18:30  Work/
        1.4MB  2026-06-10 11:02  budget.xlsx
         gdoc  2026-06-12 14:55  notes
-gdrive:/> cd Work
-gdrive:/Work> put ./report.pdf
+gdrive:/My Drive> cd Work
+gdrive:/My Drive/Work> put ./report.pdf
 uploaded ./report.pdf -> report.pdf (820.4KB)
-gdrive:/Work> get budget.xlsx
+gdrive:/My Drive/Work> get budget.xlsx
 downloaded budget.xlsx -> budget.xlsx (1.4MB)
-gdrive:/Work> quit
+gdrive:/My Drive/Work> cd "/Engineering Team/specs"
+gdrive:/Engineering Team/specs> quit
 ```
 
 ## Build
@@ -84,7 +92,7 @@ is redirected to and paste it back.
 | Command                | Description                                              |
 |------------------------|---------------------------------------------------------|
 | `ls [dir]`             | List a remote directory (default: current).             |
-| `cd [dir]`             | Change remote directory. No argument goes to the root.  |
+| `cd [dir]`             | Change remote directory. No argument (or `/`) goes to the virtual root listing all drives. |
 | `pwd`                  | Print the remote working directory.                     |
 | `get <remote> [local]` | Download a file. Google-native docs are exported (Docs→docx, Sheets→xlsx, Slides→pptx, Drawings→png). |
 | `put <local> [remote]` | Upload a local file. Re-uploading the same name replaces the file's content. |
@@ -96,8 +104,10 @@ is redirected to and paste it back.
 | `help [cmd]`           | Show command help.                                      |
 | `quit` / `exit` / `bye`| End the session.                                        |
 
-Paths may be absolute (`/Work/docs`) or relative (`../Photos`), and `.`/`..`
-work as expected. Names containing spaces can be quoted: `get "my file.pdf"`.
+Paths may be absolute (`/My Drive/Work/docs`) or relative (`../Photos`), and
+`.`/`..` work as expected; the first path component selects a drive (`My Drive`
+or a Shared Drive). Names containing spaces can be quoted: `cd "My Drive"`,
+`get "my file.pdf"`.
 
 ## Notes & limitations
 
@@ -117,8 +127,13 @@ work as expected. Names containing spaces can be quoted: `get "my file.pdf"`.
   local copy. Passing an existing directory (or a trailing `/`) as the
   destination drops the file inside it under its remote name.
 - Directory upload/download is not supported (single files only), matching the
-  minimal FTP feature set. Access is scoped to **My Drive** (shared drives are
-  not traversed).
+  minimal FTP feature set.
+- **Drives:** the session starts at a virtual root listing **My Drive** and every
+  Shared Drive you can access; `cd` into one to work inside it. The virtual root
+  itself holds no files, so `get`/`put`/`mkdir`/`rm` there report "cd into a
+  drive first". `ls` of the virtual root only lists drives you are a member of —
+  a folder merely shared with you appears inside the owning drive, not as a
+  top-level entry.
 
 ## Project layout
 

@@ -36,9 +36,10 @@ func (s *Shell) cmdLs(args []string) error {
 	if len(args) > 0 {
 		arg := args[0]
 		_, base := splitPath(arg)
-		// Pure directory references (/, ., .., trailing slash) list a folder.
-		// Anything else may name a single file, which we show as one row.
-		if base == "" || base == "." || base == ".." || strings.HasSuffix(arg, "/") {
+		// Pure directory references (/, ., .., trailing slash) and top-level
+		// drive names list a folder. Anything else may name a single file,
+		// which we show as one row.
+		if base == "" || base == "." || base == ".." || strings.HasSuffix(arg, "/") || s.singleDriveArg(arg) {
 			var err error
 			if stack, err = s.resolveDir(arg); err != nil {
 				return err
@@ -52,11 +53,18 @@ func (s *Shell) cmdLs(args []string) error {
 				fmt.Fprintf(s.out, "%12s  %s  %s\n", sizeStr(f), modTime(f.ModifiedTime), f.Name)
 				return nil
 			}
-			// List only needs the target folder's ID at the tip of the stack.
-			stack = []gdrive.Ref{{ID: f.Id, Name: f.Name}}
+			// Re-resolve as a directory so the drive context (DriveID) is
+			// threaded into the listing below.
+			if stack, err = s.resolveDir(arg); err != nil {
+				return err
+			}
 		}
 	}
-	files, err := s.c.List(s.ctx, "", currentID(stack))
+	// The virtual root lists the available drives, not a folder's children.
+	if len(stack) == 0 {
+		return s.listDrives()
+	}
+	files, err := s.c.List(s.ctx, currentDriveID(stack), currentID(stack))
 	if err != nil {
 		return err
 	}
@@ -68,6 +76,33 @@ func (s *Shell) cmdLs(args []string) error {
 		fmt.Fprintf(s.out, "%12s  %s  %s\n", sizeStr(f), modTime(f.ModifiedTime), name)
 	}
 	return nil
+}
+
+// listDrives prints the virtual-root entries (My Drive plus each Shared Drive)
+// as folders.
+func (s *Shell) listDrives() error {
+	drives, err := s.driveList()
+	if err != nil {
+		return err
+	}
+	for _, d := range drives {
+		fmt.Fprintf(s.out, "%12s  %s  %s\n", "-", modTime(""), d.Name+"/")
+	}
+	return nil
+}
+
+// singleDriveArg reports whether arg selects a single top-level drive (a
+// directory at the virtual root), so ls lists it rather than guessing
+// file-vs-folder.
+func (s *Shell) singleDriveArg(arg string) bool {
+	trimmed := strings.Trim(arg, "/")
+	if trimmed == "" || strings.Contains(trimmed, "/") {
+		return false
+	}
+	if strings.HasPrefix(arg, "/") {
+		return true // /Drive selects a drive regardless of cwd
+	}
+	return len(s.cwd) == 0 // a bare name at the virtual root is a drive
 }
 
 func (s *Shell) cmdCd(args []string) error {
@@ -227,7 +262,10 @@ func (s *Shell) cmdPut(args []string) error {
 		}
 	}
 
-	f, err := s.c.Upload(s.ctx, "", currentID(parent), name, in)
+	if len(parent) == 0 {
+		return fmt.Errorf("cannot upload to the virtual root; cd into a drive first")
+	}
+	f, err := s.c.Upload(s.ctx, currentDriveID(parent), currentID(parent), name, in)
 	if err != nil {
 		return err
 	}
@@ -249,6 +287,9 @@ func (s *Shell) cmdMkdir(args []string) error {
 	}
 	if base == "" {
 		return fmt.Errorf("%s: invalid name", args[0])
+	}
+	if len(parent) == 0 {
+		return fmt.Errorf("cannot create a folder at the virtual root; cd into a drive first")
 	}
 	f, err := s.c.Mkdir(s.ctx, currentID(parent), base)
 	if err != nil {

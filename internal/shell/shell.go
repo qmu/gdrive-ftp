@@ -16,16 +16,24 @@ import (
 	drive "google.golang.org/api/drive/v3"
 )
 
+// myDriveName is the label of the synthetic My Drive entry shown at the virtual
+// root alongside the user's Shared Drives.
+const myDriveName = "My Drive"
+
 // Shell holds the session state: the Drive client and the current remote
-// working directory, represented as the chain of folders from the root.
+// working directory. The cwd is the chain of path elements from the virtual
+// root; an empty cwd means the virtual root itself, whose entries are the
+// available drives. The first element of a non-empty cwd is always a drive
+// (My Drive or a Shared Drive) and carries its DriveID.
 type Shell struct {
 	ctx context.Context
 	c   *gdrive.Client
-	cwd []gdrive.Ref // path from root; empty means the root folder
+	cwd []gdrive.Ref // path from the virtual root; empty means the virtual root
 	out io.Writer
 }
 
-// New creates a Shell rooted at the Drive root folder.
+// New creates a Shell positioned at the virtual root, which lists My Drive and
+// every accessible Shared Drive.
 func New(ctx context.Context, c *gdrive.Client, out io.Writer) *Shell {
 	return &Shell{ctx: ctx, c: c, out: out}
 }
@@ -119,13 +127,58 @@ func (s *Shell) pwd() string {
 	return b.String()
 }
 
-// currentID returns the Drive ID of the folder at the tip of stack (RootID for
-// the empty/root stack).
+// currentID returns the Drive ID of the folder at the tip of stack, or "" at
+// the virtual root (which is not a real folder).
 func currentID(stack []gdrive.Ref) string {
 	if len(stack) == 0 {
-		return gdrive.RootID
+		return ""
 	}
 	return stack[len(stack)-1].ID
+}
+
+// currentDriveID returns the Shared Drive ID the stack is inside, or "" for the
+// virtual root and for My Drive. It is carried on the first path element.
+func currentDriveID(stack []gdrive.Ref) string {
+	if len(stack) == 0 {
+		return ""
+	}
+	return stack[0].DriveID
+}
+
+// driveList returns the virtual-root entries: a synthesized My Drive followed by
+// every accessible Shared Drive.
+func (s *Shell) driveList() ([]gdrive.Ref, error) {
+	shared, err := s.c.ListDrives(s.ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]gdrive.Ref, 0, len(shared)+1)
+	out = append(out, gdrive.Ref{ID: gdrive.RootID, Name: myDriveName, DriveID: ""})
+	out = append(out, shared...)
+	return out, nil
+}
+
+// findDrive resolves a top-level drive name (at the virtual root) to its Ref,
+// refusing to guess when several drives share a name.
+func (s *Shell) findDrive(name string) (gdrive.Ref, error) {
+	drives, err := s.driveList()
+	if err != nil {
+		return gdrive.Ref{}, err
+	}
+	var match []gdrive.Ref
+	for _, d := range drives {
+		if d.Name == name {
+			match = append(match, d)
+		}
+	}
+	switch len(match) {
+	case 0:
+		return gdrive.Ref{}, gdrive.ErrNotFound
+	case 1:
+		return match[0], nil
+	default:
+		return gdrive.Ref{}, gdrive.ErrAmbiguous
+	}
 }
 
 // resolveDir resolves a path (absolute or relative, with . and .. segments) to
@@ -141,11 +194,20 @@ func (s *Shell) resolveDir(path string) ([]gdrive.Ref, error) {
 				stack = stack[:len(stack)-1]
 			}
 		default:
-			f, err := s.c.FindDir(s.ctx, "", currentID(stack), seg)
+			if len(stack) == 0 {
+				// At the virtual root the first segment names a drive.
+				ref, err := s.findDrive(seg)
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", seg, err)
+				}
+				stack = append(stack, ref)
+				continue
+			}
+			f, err := s.c.FindDir(s.ctx, currentDriveID(stack), currentID(stack), seg)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", seg, err)
 			}
-			stack = append(stack, gdrive.Ref{ID: f.Id, Name: f.Name})
+			stack = append(stack, gdrive.Ref{ID: f.Id, Name: f.Name, DriveID: currentDriveID(stack)})
 		}
 	}
 	return stack, nil
@@ -171,7 +233,11 @@ func (s *Shell) resolveFile(path string) (*drive.File, error) {
 			return nil, err
 		}
 	}
-	f, err := s.c.FindOne(s.ctx, "", currentID(stack), base)
+	if len(stack) == 0 {
+		// At the virtual root the only entries are drives, which are directories.
+		return nil, fmt.Errorf("%s: is a drive, not a file", base)
+	}
+	f, err := s.c.FindOne(s.ctx, currentDriveID(stack), currentID(stack), base)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}

@@ -3,9 +3,9 @@ created_at: 2026-06-16T07:41:05+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [UX, Domain]
-effort:
-commit_hash:
-category:
+effort: 1h
+commit_hash: ef18922
+category: Added
 depends_on: [20260616074104-shared-drives-client-support.md]
 ---
 
@@ -122,3 +122,22 @@ one depends on (see Considerations).
   not leak `*drive.Drive`/`*drive.File` selection logic into the shell beyond the
   existing `*drive.File` listing surface (`internal/gdrive/client.go`).
 - Update `README.md`'s Project layout/Notes so the documented behavior matches.
+
+## Final Report
+
+Development completed as planned.
+
+### Discovered Insights
+
+- **Insight**: `cmdLs`'s old fast path for listing a folder argument
+  (`stack = []gdrive.Ref{{ID, Name}}`) silently dropped drive context. Inside a
+  Shared Drive that would have queried the wrong corpus, so the folder-listing
+  branch now re-resolves the arg via `resolveDir` to thread `DriveID`. The lesson:
+  once a `Ref` carries `DriveID`, never reconstruct a stack element by hand —
+  always go through `resolveDir` so the drive id propagates.
+  **Context**: The drive context lives on `cwd[0]` and is read by
+  `currentDriveID`; any code that builds a partial stack breaks that invariant.
+- **Insight**: `ls` cannot tell a drive name from a file name by syntax alone, so
+  `singleDriveArg` routes a single top-level component (absolute, or bare at the
+  virtual root) through `resolveDir`. This keeps the modeless contract — `ls Team`
+  and `ls /Team` work without a "select a drive" mode.

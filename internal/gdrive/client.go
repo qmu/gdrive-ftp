@@ -32,11 +32,15 @@ var ErrAmbiguous = errors.New("ambiguous name (multiple matches); rename to disa
 // fileFields is the set of File fields fetched for listings and lookups.
 const fileFields = "id,name,mimeType,size,modifiedTime,md5Checksum,parents"
 
-// Ref is a lightweight (id, name) pointer to a Drive file or folder, used to
-// build the working-directory path without re-querying the API.
+// Ref is a lightweight pointer to a Drive file or folder, used to build the
+// working-directory path without re-querying the API. DriveID names the Shared
+// Drive a path element belongs to ("" for My Drive and ordinary folders); the
+// shell carries it on the first path element so deeper lookups stay in the
+// right corpus.
 type Ref struct {
-	ID   string
-	Name string
+	ID      string
+	Name    string
+	DriveID string
 }
 
 // Client wraps an authenticated Drive service.
