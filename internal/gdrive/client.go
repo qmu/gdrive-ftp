@@ -70,19 +70,49 @@ func escapeQ(s string) string {
 }
 
 // List returns the non-trashed children of folderID, folders first then by
-// name. Results are paginated transparently.
-func (c *Client) List(ctx context.Context, folderID string) ([]*drive.File, error) {
+// name. driveID scopes the query to a Shared Drive ("" means My Drive / the
+// default corpus). Results are paginated transparently.
+func (c *Client) List(ctx context.Context, driveID, folderID string) ([]*drive.File, error) {
 	q := fmt.Sprintf("'%s' in parents and trashed = false", escapeQ(folderID))
 	var out []*drive.File
-	err := c.srv.Files.List().
+	call := c.srv.Files.List().
 		Q(q).
 		Spaces("drive").
 		Fields("nextPageToken, files("+fileFields+")").
 		OrderBy("folder,name_natural").
 		PageSize(1000).
-		SupportsAllDrives(true).
-		Pages(ctx, func(fl *drive.FileList) error {
-			out = append(out, fl.Files...)
+		SupportsAllDrives(true)
+	err := withDrive(call, driveID).Pages(ctx, func(fl *drive.FileList) error {
+		out = append(out, fl.Files...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// withDrive scopes a files-list call to a Shared Drive when driveID is set; an
+// empty driveID leaves the default (My Drive) corpus in place.
+func withDrive(call *drive.FilesListCall, driveID string) *drive.FilesListCall {
+	if driveID == "" {
+		return call
+	}
+	return call.Corpora("drive").DriveId(driveID).IncludeItemsFromAllDrives(true)
+}
+
+// ListDrives returns the Shared Drives the user can access as (id, name) Refs,
+// sorted by name. My Drive is not included; callers synthesize it for the
+// virtual root. Results are paginated transparently.
+func (c *Client) ListDrives(ctx context.Context) ([]Ref, error) {
+	var out []Ref
+	err := c.srv.Drives.List().
+		PageSize(100).
+		Fields("nextPageToken, drives(id,name)").
+		Pages(ctx, func(dl *drive.DriveList) error {
+			for _, d := range dl.Drives {
+				out = append(out, Ref{ID: d.Id, Name: d.Name})
+			}
 			return nil
 		})
 	if err != nil {
@@ -92,18 +122,20 @@ func (c *Client) List(ctx context.Context, folderID string) ([]*drive.File, erro
 }
 
 // FindChildren returns every non-trashed child of folderID whose name matches
-// exactly. Drive's "name =" query operator is case-insensitive and applies
-// Unicode normalization, so the results are re-filtered client-side for an
-// exact, case-sensitive match. Returns ErrNotFound if none match.
-func (c *Client) FindChildren(ctx context.Context, folderID, name string) ([]*drive.File, error) {
+// exactly. driveID scopes the query to a Shared Drive ("" means My Drive).
+// Drive's "name =" query operator is case-insensitive and applies Unicode
+// normalization, so the results are re-filtered client-side for an exact,
+// case-sensitive match. Returns ErrNotFound if none match.
+func (c *Client) FindChildren(ctx context.Context, driveID, folderID, name string) ([]*drive.File, error) {
 	q := fmt.Sprintf("name = '%s' and '%s' in parents and trashed = false",
 		escapeQ(name), escapeQ(folderID))
-	r, err := c.srv.Files.List().
+	call := c.srv.Files.List().
 		Q(q).
 		Spaces("drive").
 		Fields("files(" + fileFields + ")").
 		PageSize(100).
-		SupportsAllDrives(true).
+		SupportsAllDrives(true)
+	r, err := withDrive(call, driveID).
 		Context(ctx).
 		Do()
 	if err != nil {
@@ -124,8 +156,8 @@ func (c *Client) FindChildren(ctx context.Context, folderID, name string) ([]*dr
 // FindDir returns the single folder named name inside folderID. It returns a
 // "not a directory" error if name resolves only to non-folders, ErrNotFound if
 // nothing matches, and ErrAmbiguous if several folders share the name.
-func (c *Client) FindDir(ctx context.Context, folderID, name string) (*drive.File, error) {
-	matches, err := c.FindChildren(ctx, folderID, name)
+func (c *Client) FindDir(ctx context.Context, driveID, folderID, name string) (*drive.File, error) {
+	matches, err := c.FindChildren(ctx, driveID, folderID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +181,8 @@ func (c *Client) FindDir(ctx context.Context, folderID, name string) (*drive.Fil
 // ErrNotFound if nothing matches and ErrAmbiguous if the name is shared by more
 // than one file or folder, so destructive callers never act on a guessed
 // target.
-func (c *Client) FindOne(ctx context.Context, folderID, name string) (*drive.File, error) {
-	matches, err := c.FindChildren(ctx, folderID, name)
+func (c *Client) FindOne(ctx context.Context, driveID, folderID, name string) (*drive.File, error) {
+	matches, err := c.FindChildren(ctx, driveID, folderID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -170,12 +202,13 @@ func (c *Client) Mkdir(ctx context.Context, parentID, name string) (*drive.File,
 		Do()
 }
 
-// Upload streams r into a file named name under parentID. If exactly one
+// Upload streams r into a file named name under parentID. driveID scopes the
+// duplicate-name lookup to a Shared Drive ("" means My Drive). If exactly one
 // non-folder child has that exact name its content is replaced (a new
 // revision); otherwise a new file is created. Requiring a single exact match
 // avoids overwriting a differently-cased or ambiguously-named neighbor.
-func (c *Client) Upload(ctx context.Context, parentID, name string, r io.Reader) (*drive.File, error) {
-	matches, err := c.FindChildren(ctx, parentID, name)
+func (c *Client) Upload(ctx context.Context, driveID, parentID, name string, r io.Reader) (*drive.File, error) {
+	matches, err := c.FindChildren(ctx, driveID, parentID, name)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
 	}

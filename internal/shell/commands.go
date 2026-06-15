@@ -56,7 +56,7 @@ func (s *Shell) cmdLs(args []string) error {
 			stack = []gdrive.Ref{{ID: f.Id, Name: f.Name}}
 		}
 	}
-	files, err := s.c.List(s.ctx, currentID(stack))
+	files, err := s.c.List(s.ctx, "", currentID(stack))
 	if err != nil {
 		return err
 	}
@@ -227,7 +227,7 @@ func (s *Shell) cmdPut(args []string) error {
 		}
 	}
 
-	f, err := s.c.Upload(s.ctx, currentID(parent), name, in)
+	f, err := s.c.Upload(s.ctx, "", currentID(parent), name, in)
 	if err != nil {
 		return err
 	}

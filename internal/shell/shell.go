@@ -141,7 +141,7 @@ func (s *Shell) resolveDir(path string) ([]gdrive.Ref, error) {
 				stack = stack[:len(stack)-1]
 			}
 		default:
-			f, err := s.c.FindDir(s.ctx, currentID(stack), seg)
+			f, err := s.c.FindDir(s.ctx, "", currentID(stack), seg)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", seg, err)
 			}
@@ -171,7 +171,7 @@ func (s *Shell) resolveFile(path string) (*drive.File, error) {
 			return nil, err
 		}
 	}
-	f, err := s.c.FindOne(s.ctx, currentID(stack), base)
+	f, err := s.c.FindOne(s.ctx, "", currentID(stack), base)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", base, err)
 	}

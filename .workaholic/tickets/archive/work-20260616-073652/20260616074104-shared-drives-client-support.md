@@ -3,9 +3,9 @@ created_at: 2026-06-16T07:41:04+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [Infrastructure, Domain]
-effort:
-commit_hash:
-category:
+effort: 0.5h
+commit_hash: 191d012
+category: Added
 depends_on:
 ---
 
@@ -179,3 +179,18 @@ consumes this foundation — see Considerations.
   sibling ticket's README update, not here.
 - Stay stdlib + the already-adopted `google.golang.org/api/drive/v3`; no new
   dependency (`go.mod`).
+
+## Final Report
+
+Development completed as planned.
+
+### Discovered Insights
+
+- **Insight**: `Upload` had to gain the `driveID` parameter even though its
+  Create/Update calls only need `SupportsAllDrives(true)`, because it internally
+  calls `FindChildren` for the duplicate-name check — and that list query needs
+  the Shared-Drive corpus scoping. `Mkdir`/`Download`/`Trash` did not, since they
+  act on a known parent/file ID without listing.
+  **Context**: When extending Drive corpus scoping, the dividing line is "does it
+  run a Files.List query?", not "does it mutate?". Only the listing/lookup path
+  needs `withDrive`.
