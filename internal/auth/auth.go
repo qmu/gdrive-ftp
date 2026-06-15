@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,21 +139,78 @@ func loopbackFlow(ctx context.Context, config *oauth2.Config, state string) (*oa
 	}
 }
 
-// manualFlow prints the consent URL and reads the resulting code from stdin.
-// It still uses a loopback redirect; the user copies the code= value out of the
-// (failed-to-load) redirect URL their browser lands on.
+// manualFlow runs the remote/SSH-friendly consent flow. It prints the consent
+// URL and offers an interactive prompt: 'c' copies the URL to the user's local
+// clipboard via the OSC 52 terminal escape (the only channel that reaches a
+// laptop over SSH), 'o' attempts to open a local browser, and anything else
+// falls through to manual copy. After authorizing, the user pastes the entire
+// http://127.0.0.1:1/...?state=...&code=... redirect URL their browser lands
+// on; we extract the code and validate the state.
 func manualFlow(ctx context.Context, config *oauth2.Config, state string) (*oauth2.Token, error) {
 	config.RedirectURL = "http://127.0.0.1:1/"
 	authURL := config.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+
+	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprintf(os.Stderr,
-		"Visit this URL to authorize, then paste the value of the \"code\" query\n"+
-			"parameter from the page your browser is redirected to:\n\n%s\n\nCode: ", authURL)
-	var code string
-	if _, err := fmt.Scanln(&code); err != nil {
-		return nil, fmt.Errorf("reading code: %w", err)
+		"To authorize gdrive-ftp, open this URL in your local browser:\n\n%s\n\n", authURL)
+	fmt.Fprint(os.Stderr,
+		"Press 'c' then Enter to copy the URL to your local clipboard, "+
+			"'o' then Enter to try opening it in a browser here, "+
+			"or just copy it manually, then press Enter: ")
+	choice, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("reading choice: %w", err)
 	}
-	code = strings.TrimSpace(code)
+	switch strings.ToLower(strings.TrimSpace(choice)) {
+	case "c":
+		copyToClipboard(authURL)
+		fmt.Fprintln(os.Stderr, "Copied to clipboard.")
+	case "o":
+		openBrowser(authURL)
+	}
+
+	fmt.Fprint(os.Stderr,
+		"\nAfter you authorize, the browser redirects to a http://127.0.0.1:1/...\n"+
+			"URL that fails to load. Paste that entire URL here (or just the code): ")
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("reading redirect URL: %w", err)
+	}
+	code, err := codeFromRedirect(strings.TrimSpace(line), state)
+	if err != nil {
+		return nil, err
+	}
 	return config.Exchange(ctx, code)
+}
+
+// codeFromRedirect extracts the OAuth authorization code from a pasted redirect
+// URL, validating the embedded state against the expected CSRF value and
+// surfacing an error= denial. If the input does not parse as a URL carrying a
+// code (the user pasted the bare code), the trimmed input is returned as-is.
+func codeFromRedirect(input, state string) (string, error) {
+	if u, err := url.Parse(input); err == nil {
+		q := u.Query()
+		if e := q.Get("error"); e != "" {
+			return "", fmt.Errorf("authorization denied: %s", e)
+		}
+		if code := q.Get("code"); code != "" {
+			if q.Get("state") != state {
+				return "", fmt.Errorf("state mismatch (possible CSRF); aborting")
+			}
+			return code, nil
+		}
+	}
+	// Not a redirect URL carrying a code or error; treat input as the bare code.
+	return input, nil
+}
+
+// copyToClipboard writes the OSC 52 terminal escape sequence to stderr, which a
+// terminal emulator forwards to the local clipboard even across SSH. This is
+// the only clipboard channel that reaches the user's laptop on a remote host,
+// so we deliberately do not shell out to xclip/pbcopy.
+func copyToClipboard(s string) {
+	enc := base64.StdEncoding.EncodeToString([]byte(s))
+	fmt.Fprintf(os.Stderr, "\x1b]52;c;%s\x07", enc)
 }
 
 // savingSource is an oauth2.TokenSource that persists the token whenever the

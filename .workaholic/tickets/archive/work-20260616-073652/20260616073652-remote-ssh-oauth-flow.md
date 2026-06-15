@@ -3,9 +3,9 @@ created_at: 2026-06-16T07:36:52+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [Infrastructure, UX]
-effort:
-commit_hash:
-category:
+effort: 0.5h
+commit_hash: 9a164fa
+category: Added
 depends_on:
 ---
 
@@ -224,3 +224,21 @@ The auto-loopback path stays the default; this upgrades the `-manual` path
   the new pure helpers are easily covered without network access following the
   `internal/shell/shell_test.go` style.
 - Update `README.md`'s `-manual` description so the documented UX matches.
+
+## Final Report
+
+Development completed as planned.
+
+### Discovered Insights
+
+- **Insight**: `codeFromRedirect` must check `error=` *before* requiring `code=`.
+  A denial redirect carries `error=access_denied` with no `code`, so the original
+  "bail to bare code when code is empty" guard would have swallowed the denial and
+  fed the whole URL to `Exchange`. The final shape parses once, returns the denial
+  if `error` is present, then handles `code`+`state`, and only treats the input as
+  a bare code when it is not a redirect URL at all.
+  **Context**: Mirrors the validation `loopbackFlow` already does server-side; the
+  paste path now has parity (CSRF + denial + empty-code handling).
+- **Insight**: `copyToClipboard` is unit-testable by swapping `os.Stderr` for an
+  `os.Pipe` — no refactor to inject a writer was needed, keeping the helper as a
+  tiny best-effort sink that mirrors `openBrowser`.

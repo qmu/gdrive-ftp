@@ -81,11 +81,15 @@ gdrive-ftp put ./photo.jpg /Photos/photo.jpg
 |-----------|----------------------------------------|----------------------------------------------------|
 | `-creds`  | `./credentials.json` or config dir     | OAuth client `credentials.json`                    |
 | `-token`  | `~/.config/gdrive-ftp/token.json`      | Where to cache the auth token                      |
-| `-manual` | off                                    | Paste the auth code on the terminal (headless host) |
+| `-manual` | off                                    | Authorize over the terminal — copy the URL out, paste the redirect URL back (headless/SSH host) |
 
-On a machine with no local browser (e.g. SSH), use `-manual`: open the printed
-URL anywhere, approve, then copy the `code=` value from the page your browser
-is redirected to and paste it back.
+On a machine with no local browser (e.g. over SSH), use `-manual`. The consent
+URL is printed; press **`c`** then Enter to copy it to your **local** clipboard
+(sent via the OSC 52 terminal escape, so it works through SSH if your terminal
+supports it), or copy it manually. Open it in your laptop browser, approve, and
+the browser is redirected to a `http://127.0.0.1` URL that fails to load — paste
+that **entire** URL back at the prompt (pasting just the `code=` value also
+works). The `state` is verified to guard against CSRF.
 
 ## Commands
 

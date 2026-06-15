@@ -26,7 +26,7 @@ import (
 func main() {
 	creds := flag.String("creds", defaultCredsPath(), "path to OAuth client credentials.json")
 	token := flag.String("token", defaultTokenPath(), "path to the cached auth token")
-	manual := flag.Bool("manual", false, "paste the auth code on the terminal instead of using a local browser redirect (for headless hosts)")
+	manual := flag.Bool("manual", false, "authorize over the terminal: copy the consent URL (press 'c' to copy via OSC 52) and paste the redirect URL back (for headless/SSH hosts)")
 	flag.Usage = usage
 	flag.Parse()
 
