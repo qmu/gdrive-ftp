@@ -1,0 +1,10 @@
+{
+  "name": "gdrive-ftp",
+  "description": "Use when a task needs to read or modify the user's Google Drive from the command line via the gdrive-ftp CLI.",
+  "version": "1.0.0",
+  "dependencies": [],
+  "author": {
+    "name": "tamurayoshiya",
+    "email": "a@qmu.jp"
+  }
+}

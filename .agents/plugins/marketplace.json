@@ -1,0 +1,20 @@
+{
+  "name": "gdrive-ftp",
+  "interface": {
+    "displayName": "gdrive-ftp"
+  },
+  "plugins": [
+    {
+      "name": "gdrive-ftp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/gdrive-ftp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

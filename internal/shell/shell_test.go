@@ -6,8 +6,226 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+
+	"gdrive-ftp/internal/gdrive"
+
+	"google.golang.org/api/googleapi"
 )
+
+func TestFilterByPrefix(t *testing.T) {
+	names := []string{"Reports/", "Recipes/", "budget.xlsx", "notes"}
+	got := filterByPrefix(names, "Re")
+	want := []string{"Reports/", "Recipes/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("filterByPrefix = %#v, want %#v", got, want)
+	}
+	if got := filterByPrefix(names, ""); len(got) != 4 {
+		t.Errorf("empty prefix should match all, got %d", len(got))
+	}
+	if got := filterByPrefix(names, "zzz"); got != nil {
+		t.Errorf("no match should be nil, got %#v", got)
+	}
+}
+
+func TestLongestCommonPrefix(t *testing.T) {
+	tests := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"Reports/", "Recipes/"}, "Re"},
+		{[]string{"abc", "abd", "abz"}, "ab"},
+		{[]string{"only/"}, "only/"},
+		{[]string{"a", "b"}, ""},
+		{nil, ""},
+	}
+	for _, tt := range tests {
+		if got := longestCommonPrefix(tt.in); got != tt.want {
+			t.Errorf("longestCommonPrefix(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestQuoteArg(t *testing.T) {
+	if got := quoteArg("plain"); got != "plain" {
+		t.Errorf("quoteArg(plain) = %q, want plain", got)
+	}
+	if got := quoteArg("my file"); got != `"my file"` {
+		t.Errorf(`quoteArg("my file") = %q, want "my file"`, got)
+	}
+}
+
+func TestLastTokenStart(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"", 0},
+		{"ls", 0},
+		{"ls ", 3},      // trailing space → new token at end
+		{"ls Wo", 3},    // active token "Wo" starts at 3
+		{"cd a/b/c", 3}, // whole path is one token
+		{`get "my fi`, 4},
+	}
+	for _, tt := range tests {
+		if got := lastTokenStart(tt.in); got != tt.want {
+			t.Errorf("lastTokenStart(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestArgKind(t *testing.T) {
+	tests := []struct {
+		verb string
+		idx  int
+		want string
+	}{
+		{"ls", 1, "remote"},
+		{"cd", 1, "remote"},
+		{"get", 1, "remote"},
+		{"get", 2, "local"},
+		{"put", 1, "local"},
+		{"put", 2, "remote"},
+		{"lcd", 1, "local"},
+		{"pwd", 1, ""},
+		{"ls", 2, ""},
+	}
+	for _, tt := range tests {
+		if got := argKind(tt.verb, tt.idx); got != tt.want {
+			t.Errorf("argKind(%q,%d) = %q, want %q", tt.verb, tt.idx, got, tt.want)
+		}
+	}
+}
+
+func TestCompletionVerbs(t *testing.T) {
+	verbs := completionVerbs()
+	for _, want := range []string{"ls", "cd", "get", "put", "quit", "exit", "bye"} {
+		found := false
+		for _, v := range verbs {
+			if v == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("completionVerbs missing %q", want)
+		}
+	}
+}
+
+func TestFriendlyErr(t *testing.T) {
+	if friendlyErr(nil) != nil {
+		t.Error("friendlyErr(nil) should be nil")
+	}
+
+	plain := errors.New("boom")
+	if got := friendlyErr(plain); got != plain {
+		t.Errorf("plain error should pass through unchanged, got %v", got)
+	}
+
+	disabled := &googleapi.Error{
+		Code: 403,
+		Message: "Google Drive API has not been used in project 123456789012 before or it is " +
+			"disabled. Enable it by visiting https://console.developers.google.com/apis/api/" +
+			"drive.googleapis.com/overview?project=123456789012 then retry.",
+		Errors: []googleapi.ErrorItem{{Reason: "accessNotConfigured"}},
+	}
+	got := friendlyErr(disabled)
+	if got == disabled || !strings.Contains(got.Error(), "Google Drive API is disabled") {
+		t.Errorf("disabled-API error not rewritten: %v", got)
+	}
+	// The exact project-specific activation URL and project number are surfaced.
+	if !strings.Contains(got.Error(), "overview?project=123456789012") {
+		t.Errorf("rewritten error should include the exact activation URL: %v", got)
+	}
+	if !strings.Contains(got.Error(), "--project=123456789012") {
+		t.Errorf("rewritten error should include the exact project number: %v", got)
+	}
+}
+
+// drive stacks used across the virtual-root path tests.
+var (
+	rootStack    []gdrive.Ref // virtual root
+	myDriveStack = []gdrive.Ref{{ID: gdrive.RootID, Name: myDriveName, DriveID: ""}}
+	sharedStack  = []gdrive.Ref{
+		{ID: "d1", Name: "Team", DriveID: "d1"},
+		{ID: "f1", Name: "sub", DriveID: "d1"},
+	}
+)
+
+func TestPwd(t *testing.T) {
+	tests := []struct {
+		name string
+		cwd  []gdrive.Ref
+		want string
+	}{
+		{"virtual root", rootStack, "/"},
+		{"my drive", myDriveStack, "/My Drive"},
+		{"shared drive subfolder", sharedStack, "/Team/sub"},
+	}
+	for _, tt := range tests {
+		s := &Shell{cwd: tt.cwd}
+		if got := s.pwd(); got != tt.want {
+			t.Errorf("%s: pwd() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCurrentID(t *testing.T) {
+	tests := []struct {
+		name  string
+		stack []gdrive.Ref
+		want  string
+	}{
+		{"virtual root has no folder", rootStack, ""},
+		{"my drive root", myDriveStack, gdrive.RootID},
+		{"shared drive tip", sharedStack, "f1"},
+	}
+	for _, tt := range tests {
+		if got := currentID(tt.stack); got != tt.want {
+			t.Errorf("%s: currentID() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCurrentDriveID(t *testing.T) {
+	tests := []struct {
+		name  string
+		stack []gdrive.Ref
+		want  string
+	}{
+		{"virtual root", rootStack, ""},
+		{"my drive uses default corpus", myDriveStack, ""},
+		{"shared drive carries id from first element", sharedStack, "d1"},
+	}
+	for _, tt := range tests {
+		if got := currentDriveID(tt.stack); got != tt.want {
+			t.Errorf("%s: currentDriveID() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestSingleDriveArg(t *testing.T) {
+	tests := []struct {
+		name string
+		cwd  []gdrive.Ref
+		arg  string
+		want bool
+	}{
+		{"bare name at virtual root", rootStack, "Team", true},
+		{"absolute single component", myDriveStack, "/Team", true},
+		{"bare name inside a drive", myDriveStack, "Reports", false},
+		{"multi-component absolute", rootStack, "/Team/sub", false},
+		{"root slash is not a drive", rootStack, "/", false},
+	}
+	for _, tt := range tests {
+		s := &Shell{cwd: tt.cwd}
+		if got := s.singleDriveArg(tt.arg); got != tt.want {
+			t.Errorf("%s: singleDriveArg(%q) = %v, want %v", tt.name, tt.arg, got, tt.want)
+		}
+	}
+}
 
 func TestTokenize(t *testing.T) {
 	tests := []struct {

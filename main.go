@@ -3,11 +3,13 @@
 // mkdir and rm, or runs a single command passed on the command line.
 //
 //	gdrive-ftp                 # interactive shell
+//	gdrive-ftp auth            # run the OAuth consent flow and exit
 //	gdrive-ftp ls /            # one-shot: list the root folder
 //	gdrive-ftp get report.pdf  # one-shot: download a file
 //
-// On first run it performs the OAuth consent flow using an OAuth "Desktop app"
-// client_credentials.json (see -creds) and caches the token under -token.
+// On first run (and on "auth") it performs the OAuth consent flow using an
+// OAuth "Desktop app" client_credentials.json (see -creds) and caches the token
+// under -token.
 package main
 
 import (
@@ -26,18 +28,43 @@ import (
 func main() {
 	creds := flag.String("creds", defaultCredsPath(), "path to OAuth client credentials.json")
 	token := flag.String("token", defaultTokenPath(), "path to the cached auth token")
-	manual := flag.Bool("manual", false, "paste the auth code on the terminal instead of using a local browser redirect (for headless hosts)")
 	flag.Usage = usage
 	flag.Parse()
+	args := flag.Args()
+
+	// "completion zsh" prints a zsh completion script; it needs no Drive auth.
+	if len(args) >= 1 && args[0] == "completion" {
+		if len(args) == 2 && args[1] == "zsh" {
+			fmt.Print(zshCompletion)
+			return
+		}
+		fatal(fmt.Errorf("usage: %s completion zsh", filepath.Base(os.Args[0])))
+	}
 
 	// Cancel in-flight Drive calls cleanly on Ctrl-C.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	hc, err := auth.Client(ctx, *creds, *token, *manual)
+	// "__complete" is the hidden helper the zsh script calls on Tab. It must
+	// never trigger the interactive OAuth flow (that would hang the shell), so it
+	// only runs with an already-cached token and stays silent otherwise.
+	if len(args) >= 1 && args[0] == "__complete" {
+		completeForShell(ctx, *creds, *token, args[1:])
+		return
+	}
+
+	hc, err := auth.Client(ctx, *creds, *token)
 	if err != nil {
 		fatal(err)
 	}
+
+	// "auth" is a standalone subcommand: running the OAuth flow (done above) and
+	// caching the token is all it does, so report success and exit.
+	if args := flag.Args(); len(args) == 1 && args[0] == "auth" {
+		fmt.Printf("Authorized. Token cached at %s\n", *token)
+		return
+	}
+
 	client, err := gdrive.New(ctx, hc)
 	if err != nil {
 		fatal(err)
@@ -58,11 +85,50 @@ func main() {
 	}
 }
 
+// completeForShell prints shell-completion candidates (one per line) for the
+// given command words. It is invoked by the zsh completion script on Tab and
+// must stay silent on any error so a Tab press never spews output.
+func completeForShell(ctx context.Context, creds, token string, words []string) {
+	// Bail before auth.Client so a Tab press never launches the OAuth flow.
+	if _, err := os.Stat(token); err != nil {
+		return
+	}
+	hc, err := auth.Client(ctx, creds, token)
+	if err != nil {
+		return
+	}
+	client, err := gdrive.New(ctx, hc)
+	if err != nil {
+		return
+	}
+	sh := shell.New(ctx, client, os.Stdout)
+	for _, c := range sh.Complete(words) {
+		fmt.Println(c)
+	}
+}
+
+// zshCompletion is the script emitted by "gdrive-ftp completion zsh". Enable it
+// with:  source <(gdrive-ftp completion zsh)   (after compinit), or save it to a
+// file named _gdrive-ftp on your $fpath.
+const zshCompletion = `#compdef gdrive-ftp
+# zsh completion for gdrive-ftp. Completes command verbs, remote Drive paths
+# (queried live), and local paths. Enable with:
+#   source <(gdrive-ftp completion zsh)
+_gdrive_ftp() {
+  local -a cands
+  cands=( ${(f)"$(gdrive-ftp __complete "${(@)words[2,CURRENT]}" 2>/dev/null)"} )
+  compadd -- $cands
+}
+compdef _gdrive_ftp gdrive-ftp
+`
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s [flags] [command args...]\n\n", filepath.Base(os.Args[0]))
 	fmt.Fprintln(os.Stderr, "Flags:")
 	flag.PrintDefaults()
 	fmt.Fprintln(os.Stderr, "\nWith no command, an interactive FTP-like shell is started.")
+	fmt.Fprintln(os.Stderr, "Use 'auth' to run the OAuth consent flow and exit.")
+	fmt.Fprintln(os.Stderr, "Use 'completion zsh' to print a zsh completion script (see README).")
 }
 
 func fatal(err error) {

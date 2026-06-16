@@ -5,20 +5,34 @@ familiar interactive shell — `ls`, `cd`, `pwd`, `get` (download), `put`
 (upload), `mkdir`, `rm` — that talks to your Drive over the official Drive v3
 API.
 
+> [!WARNING]
+> This requests **full Drive access** and can upload, overwrite (`put` replaces
+> a same-named file's content), and trash files across My Drive and your Shared
+> Drives. `rm` trashes (reversible); nothing is hard-deleted. Keep
+> `credentials.json` / `token.json` private — they grant access to your Drive.
+
+The shell opens at a **virtual root** that lists *My Drive* alongside every
+Shared Drive you can access; the drive name is the first component of every path.
+
 ```
 $ gdrive-ftp
 Connected to Google Drive. Type 'help' for commands, 'quit' to exit.
 gdrive:/> ls
+           -                    My Drive/
+           -                    Engineering Team/
+gdrive:/> cd "My Drive"
+gdrive:/My Drive> ls
            -  2026-05-01 09:12  Photos/
            -  2026-04-22 18:30  Work/
        1.4MB  2026-06-10 11:02  budget.xlsx
         gdoc  2026-06-12 14:55  notes
-gdrive:/> cd Work
-gdrive:/Work> put ./report.pdf
+gdrive:/My Drive> cd Work
+gdrive:/My Drive/Work> put ./report.pdf
 uploaded ./report.pdf -> report.pdf (820.4KB)
-gdrive:/Work> get budget.xlsx
+gdrive:/My Drive/Work> get budget.xlsx
 downloaded budget.xlsx -> budget.xlsx (1.4MB)
-gdrive:/Work> quit
+gdrive:/My Drive/Work> cd "/Engineering Team/specs"
+gdrive:/Engineering Team/specs> quit
 ```
 
 ## Build
@@ -45,9 +59,10 @@ own.
 5. Save that file as `credentials.json` next to the binary, or at
    `~/.config/gdrive-ftp/credentials.json`, or pass it with `-creds`.
 
-On first run the app opens your browser for consent, then caches the resulting
-token at `~/.config/gdrive-ftp/token.json` so you only authorize once. The
-token is refreshed automatically on later runs.
+On first run the app walks you through OAuth consent over the terminal (works
+the same locally or over SSH — see [Authorizing](#authorizing)), then caches the
+resulting token at `~/.config/gdrive-ftp/token.json` so you only authorize once.
+The token is refreshed automatically on later runs.
 
 > **Keep `credentials.json` and `token.json` private** — they grant access to
 > your Drive. They are git-ignored by default.
@@ -73,18 +88,25 @@ gdrive-ftp put ./photo.jpg /Photos/photo.jpg
 |-----------|----------------------------------------|----------------------------------------------------|
 | `-creds`  | `./credentials.json` or config dir     | OAuth client `credentials.json`                    |
 | `-token`  | `~/.config/gdrive-ftp/token.json`      | Where to cache the auth token                      |
-| `-manual` | off                                    | Paste the auth code on the terminal (headless host) |
 
-On a machine with no local browser (e.g. SSH), use `-manual`: open the printed
-URL anywhere, approve, then copy the `code=` value from the page your browser
-is redirected to and paste it back.
+### Authorizing
+
+The first run authorizes over the terminal — no local browser or callback server
+needed, so it works the same on your laptop or a headless/SSH host. The consent
+URL is printed; press **`c`** then Enter to copy it to your **local** clipboard
+(sent via the OSC 52 terminal escape, so it works through SSH if your terminal
+supports it), press **`o`** to try opening a browser on this host, or copy it
+manually. Open it in your browser, approve, and the browser is redirected to a
+`http://127.0.0.1` URL that fails to load — paste that **entire** URL back at the
+prompt (pasting just the `code=` value also works). The `state` is verified to
+guard against CSRF.
 
 ## Commands
 
 | Command                | Description                                              |
 |------------------------|---------------------------------------------------------|
 | `ls [dir]`             | List a remote directory (default: current).             |
-| `cd [dir]`             | Change remote directory. No argument goes to the root.  |
+| `cd [dir]`             | Change remote directory. No argument (or `/`) goes to the virtual root listing all drives. |
 | `pwd`                  | Print the remote working directory.                     |
 | `get <remote> [local]` | Download a file. Google-native docs are exported (Docs→docx, Sheets→xlsx, Slides→pptx, Drawings→png). |
 | `put <local> [remote]` | Upload a local file. Re-uploading the same name replaces the file's content. |
@@ -96,8 +118,30 @@ is redirected to and paste it back.
 | `help [cmd]`           | Show command help.                                      |
 | `quit` / `exit` / `bye`| End the session.                                        |
 
-Paths may be absolute (`/Work/docs`) or relative (`../Photos`), and `.`/`..`
-work as expected. Names containing spaces can be quoted: `get "my file.pdf"`.
+Paths may be absolute (`/My Drive/Work/docs`) or relative (`../Photos`), and
+`.`/`..` work as expected; the first path component selects a drive (`My Drive`
+or a Shared Drive). Names containing spaces can be quoted: `cd "My Drive"`,
+`get "my file.pdf"`.
+
+**Tab completion** (like `sftp`): in the interactive shell, press **Tab** to
+complete command names, remote paths (folders and files fetched live from
+Drive — at the top level it completes drive names), and local paths for `lcd`/
+`lls`/`put`. When several entries match, they're listed above the prompt. (Only
+in an interactive terminal; piped/one-shot input is unaffected.)
+
+**zsh completion at your shell prompt** — to complete `gdrive-ftp ls <Tab>`
+directly in zsh (not inside the interactive shell), enable the bundled script.
+Add this to your `~/.zshrc` (after `compinit`):
+
+```zsh
+source <(gdrive-ftp completion zsh)
+```
+
+Then `gdrive-ftp ls <Tab>`, `gdrive-ftp cd qmu-<Tab>`, etc. complete remote
+Drive paths (and `gdrive-ftp put ./file <Tab>` completes the remote target).
+It uses your cached token and stays silent if you haven't authorized yet
+(run `gdrive-ftp auth` first). Each Tab makes a live Drive call, so expect a
+brief pause on large folders.
 
 ## Notes & limitations
 
@@ -117,15 +161,43 @@ work as expected. Names containing spaces can be quoted: `get "my file.pdf"`.
   local copy. Passing an existing directory (or a trailing `/`) as the
   destination drops the file inside it under its remote name.
 - Directory upload/download is not supported (single files only), matching the
-  minimal FTP feature set. Access is scoped to **My Drive** (shared drives are
-  not traversed).
+  minimal FTP feature set.
+- **Drives:** the session starts at a virtual root listing **My Drive** and every
+  Shared Drive you can access; `cd` into one to work inside it. The virtual root
+  itself holds no files, so `get`/`put`/`mkdir`/`rm` there report "cd into a
+  drive first". `ls` of the virtual root only lists drives you are a member of —
+  a folder merely shared with you appears inside the owning drive, not as a
+  top-level entry.
 
 ## Project layout
 
 ```
-main.go                     CLI wiring, flags, interactive vs one-shot
-internal/auth/auth.go       OAuth2 consent flow + token caching/refresh
-internal/gdrive/client.go   Drive v3 wrapper (list/find/upload/download/export/trash)
-internal/shell/shell.go     REPL, path resolution, tokenizer
-internal/shell/commands.go  Command implementations
+main.go                                   CLI wiring, flags, interactive vs one-shot
+internal/auth/auth.go                     OAuth2 consent flow + token caching/refresh
+internal/gdrive/client.go                 Drive v3 wrapper (list/find/upload/download/export/trash)
+internal/shell/shell.go                   REPL, path resolution, tokenizer, completion
+internal/shell/commands.go                Command implementations
+plugins/gdrive-ftp/skills/gdrive-ftp/     The agent skill (how to drive this CLI)
+.claude-plugin/marketplace.json           Claude Code plugin marketplace
+.agents/plugins/marketplace.json          Codex plugin marketplace
 ```
+
+## Agent skill / plugin
+
+This repo ships a skill that teaches a coding agent how to drive the CLI for
+Google Drive (one-shot commands, the drive/path model, auth prerequisite, and
+gotchas). It installs as a plugin on Claude Code and OpenAI Codex, or via the
+cross-agent skills CLI:
+
+| Agent | Install |
+| ----- | ------- |
+| **Claude Code** | `/plugin marketplace add qmu/gdrive-ftp`, then enable the `gdrive-ftp` plugin |
+| **OpenAI Codex** | `codex plugin marketplace add qmu/gdrive-ftp --ref main`<br>`codex plugin add gdrive-ftp@gdrive-ftp` |
+| **Cursor / OpenCode / others** | `npx skills add qmu/gdrive-ftp` |
+
+> The plugin ships the **skill**; the `gdrive-ftp` **binary** must be built or
+> installed separately (see [Build](#build)) and on your `PATH`. Authorize once
+> with `gdrive-ftp auth` before agent use.
+
+A Claude session working with this repo as its cwd also auto-discovers the skill
+(via `.claude/skills/gdrive-ftp`, a symlink into `plugins/`); no install needed.
