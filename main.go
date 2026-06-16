@@ -3,11 +3,13 @@
 // mkdir and rm, or runs a single command passed on the command line.
 //
 //	gdrive-ftp                 # interactive shell
+//	gdrive-ftp auth            # run the OAuth consent flow and exit
 //	gdrive-ftp ls /            # one-shot: list the root folder
 //	gdrive-ftp get report.pdf  # one-shot: download a file
 //
-// On first run it performs the OAuth consent flow using an OAuth "Desktop app"
-// client_credentials.json (see -creds) and caches the token under -token.
+// On first run (and on "auth") it performs the OAuth consent flow using an
+// OAuth "Desktop app" client_credentials.json (see -creds) and caches the token
+// under -token.
 package main
 
 import (
@@ -37,6 +39,14 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
+
+	// "auth" is a standalone subcommand: running the OAuth flow (done above) and
+	// caching the token is all it does, so report success and exit.
+	if args := flag.Args(); len(args) == 1 && args[0] == "auth" {
+		fmt.Printf("Authorized. Token cached at %s\n", *token)
+		return
+	}
+
 	client, err := gdrive.New(ctx, hc)
 	if err != nil {
 		fatal(err)
@@ -62,6 +72,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Flags:")
 	flag.PrintDefaults()
 	fmt.Fprintln(os.Stderr, "\nWith no command, an interactive FTP-like shell is started.")
+	fmt.Fprintln(os.Stderr, "Use 'auth' to run the OAuth consent flow and exit.")
 }
 
 func fatal(err error) {
