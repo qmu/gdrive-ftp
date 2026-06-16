@@ -25,16 +25,22 @@ func TestFriendlyErr(t *testing.T) {
 	}
 
 	disabled := &googleapi.Error{
-		Code:    403,
-		Message: "Google Drive API has not been used in project 651063897762 before or it is disabled.",
-		Errors:  []googleapi.ErrorItem{{Reason: "accessNotConfigured"}},
+		Code: 403,
+		Message: "Google Drive API has not been used in project 651063897762 before or it is " +
+			"disabled. Enable it by visiting https://console.developers.google.com/apis/api/" +
+			"drive.googleapis.com/overview?project=651063897762 then retry.",
+		Errors: []googleapi.ErrorItem{{Reason: "accessNotConfigured"}},
 	}
 	got := friendlyErr(disabled)
 	if got == disabled || !strings.Contains(got.Error(), "Google Drive API is disabled") {
 		t.Errorf("disabled-API error not rewritten: %v", got)
 	}
-	if !strings.Contains(got.Error(), "console.cloud.google.com") {
-		t.Errorf("rewritten error should include the enable URL: %v", got)
+	// The exact project-specific activation URL and project number are surfaced.
+	if !strings.Contains(got.Error(), "overview?project=651063897762") {
+		t.Errorf("rewritten error should include the exact activation URL: %v", got)
+	}
+	if !strings.Contains(got.Error(), "--project=651063897762") {
+		t.Errorf("rewritten error should include the exact project number: %v", got)
 	}
 }
 

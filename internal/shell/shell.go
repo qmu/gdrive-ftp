@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -112,13 +113,41 @@ func friendlyErr(err error) error {
 			}
 		}
 		if disabled {
-			return errors.New("the Google Drive API is disabled for this OAuth client's Google Cloud project.\n" +
-				"Enable it, wait ~1 minute for it to propagate, then retry:\n" +
-				"  • Console: https://console.cloud.google.com/apis/library/drive.googleapis.com\n" +
-				"  • or:      gcloud services enable drive.googleapis.com --project=<your-project-id>")
+			enableURL := "https://console.cloud.google.com/apis/library/drive.googleapis.com"
+			project := "<your-project-id>"
+			// Prefer the exact, project-specific activation URL Google returned.
+			if u := activationURL(err.Error()); u != "" {
+				enableURL = u
+			}
+			if p := projectNumber(err.Error()); p != "" {
+				project = p
+			}
+			return fmt.Errorf("the Google Drive API is disabled for this OAuth client's Google Cloud project.\n"+
+				"Enable it, wait ~1 minute for it to propagate, then retry:\n"+
+				"  • Console: %s\n"+
+				"  • or:      gcloud services enable drive.googleapis.com --project=%s", enableURL, project)
 		}
 	}
 	return err
+}
+
+var (
+	reActivationURL = regexp.MustCompile(`https://[^\s"]*drive\.googleapis\.com[^\s"]*overview\?project=\d+`)
+	reProjectNumber = regexp.MustCompile(`project[s/=]+(\d+)`)
+)
+
+// activationURL extracts Google's exact "enable this API" console URL from an
+// error message, or "" if none is present.
+func activationURL(msg string) string {
+	return reActivationURL.FindString(msg)
+}
+
+// projectNumber extracts the GCP project number from an error message, or "".
+func projectNumber(msg string) string {
+	if m := reProjectNumber.FindStringSubmatch(msg); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // dispatch runs one parsed command line; it returns true when the session
