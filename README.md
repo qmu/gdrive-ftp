@@ -166,9 +166,24 @@ brief pause on large folders.
 ## Project layout
 
 ```
-main.go                     CLI wiring, flags, interactive vs one-shot
-internal/auth/auth.go       OAuth2 consent flow + token caching/refresh
-internal/gdrive/client.go   Drive v3 wrapper (list/find/upload/download/export/trash)
-internal/shell/shell.go     REPL, path resolution, tokenizer
-internal/shell/commands.go  Command implementations
+main.go                          CLI wiring, flags, interactive vs one-shot
+internal/auth/auth.go            OAuth2 consent flow + token caching/refresh
+internal/gdrive/client.go        Drive v3 wrapper (list/find/upload/download/export/trash)
+internal/shell/shell.go          REPL, path resolution, tokenizer
+internal/shell/commands.go       Command implementations
+.claude/skills/gdrive-ftp/       Claude Code skill: how to drive this CLI
+```
+
+## Claude Code skill
+
+`.claude/skills/gdrive-ftp/SKILL.md` is a [Claude Code](https://claude.com/claude-code)
+skill that teaches a Claude session how to use this CLI for Google Drive
+operations (one-shot commands, the drive/path model, auth prerequisite, and
+gotchas). A session running with this repo as its working directory discovers it
+automatically. To make it loadable from anywhere, symlink (or copy) it onto your
+personal skills path:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s "$PWD/.claude/skills/gdrive-ftp" ~/.claude/skills/gdrive-ftp
 ```

@@ -3,9 +3,9 @@ created_at: 2026-06-16T14:21:05+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [UX]
-effort:
-commit_hash:
-category:
+effort: 0.5h
+commit_hash: dff24a8
+category: Added
 depends_on:
 ---
 
@@ -135,3 +135,24 @@ source):
   + absolute paths and the stderr/exit-code contract over the interactive REPL.
 - **`.claude/` in this repo**: adding `.claude/skills/` is new for this repo;
   ensure it isn't git-ignored (it must be committed to be version-controlled).
+
+## Final Report
+
+Development completed as planned. Created `.claude/skills/gdrive-ftp/SKILL.md`
+(frontmatter `name: gdrive-ftp` + trigger-oriented `description`; body covering
+prerequisites/auth, the virtual-root path model, one-shot command examples, the
+stderr/non-zero-exit contract, and gotchas) and added a "Claude Code skill"
+section to `README.md` with the `~/.claude/skills/` symlink install step.
+
+### Discovered Insights
+
+- **Insight**: the skill auto-loads in this very repo — after writing it, this
+  session's available-skills list immediately included `gdrive-ftp`. So a Claude
+  session with this repo as cwd needs no install step; the symlink into
+  `~/.claude/skills/` is only for sessions running elsewhere.
+  **Context**: confirms the `.claude/skills/<name>/SKILL.md` project-skill
+  location is the right canonical home (version-controlled + auto-discovered).
+- **Insight**: the skill deliberately steers the consuming agent to **one-shot
+  absolute-path** usage because one-shot mode has no persistent cwd — a subtlety
+  that isn't obvious from the interactive `cd`/`pwd` verbs and would otherwise
+  cause "cd into a drive first" / not-found errors.
