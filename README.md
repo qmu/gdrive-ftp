@@ -53,9 +53,10 @@ own.
 5. Save that file as `credentials.json` next to the binary, or at
    `~/.config/gdrive-ftp/credentials.json`, or pass it with `-creds`.
 
-On first run the app opens your browser for consent, then caches the resulting
-token at `~/.config/gdrive-ftp/token.json` so you only authorize once. The
-token is refreshed automatically on later runs.
+On first run the app walks you through OAuth consent over the terminal (works
+the same locally or over SSH — see [Authorizing](#authorizing)), then caches the
+resulting token at `~/.config/gdrive-ftp/token.json` so you only authorize once.
+The token is refreshed automatically on later runs.
 
 > **Keep `credentials.json` and `token.json` private** — they grant access to
 > your Drive. They are git-ignored by default.
@@ -81,15 +82,18 @@ gdrive-ftp put ./photo.jpg /Photos/photo.jpg
 |-----------|----------------------------------------|----------------------------------------------------|
 | `-creds`  | `./credentials.json` or config dir     | OAuth client `credentials.json`                    |
 | `-token`  | `~/.config/gdrive-ftp/token.json`      | Where to cache the auth token                      |
-| `-manual` | off                                    | Authorize over the terminal — copy the URL out, paste the redirect URL back (headless/SSH host) |
 
-On a machine with no local browser (e.g. over SSH), use `-manual`. The consent
+### Authorizing
+
+The first run authorizes over the terminal — no local browser or callback server
+needed, so it works the same on your laptop or a headless/SSH host. The consent
 URL is printed; press **`c`** then Enter to copy it to your **local** clipboard
 (sent via the OSC 52 terminal escape, so it works through SSH if your terminal
-supports it), or copy it manually. Open it in your laptop browser, approve, and
-the browser is redirected to a `http://127.0.0.1` URL that fails to load — paste
-that **entire** URL back at the prompt (pasting just the `code=` value also
-works). The `state` is verified to guard against CSRF.
+supports it), press **`o`** to try opening a browser on this host, or copy it
+manually. Open it in your browser, approve, and the browser is redirected to a
+`http://127.0.0.1` URL that fails to load — paste that **entire** URL back at the
+prompt (pasting just the `code=` value also works). The `state` is verified to
+guard against CSRF.
 
 ## Commands
 

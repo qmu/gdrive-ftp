@@ -26,7 +26,6 @@ import (
 func main() {
 	creds := flag.String("creds", defaultCredsPath(), "path to OAuth client credentials.json")
 	token := flag.String("token", defaultTokenPath(), "path to the cached auth token")
-	manual := flag.Bool("manual", false, "authorize over the terminal: copy the consent URL (press 'c' to copy via OSC 52) and paste the redirect URL back (for headless/SSH hosts)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -34,7 +33,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	hc, err := auth.Client(ctx, *creds, *token, *manual)
+	hc, err := auth.Client(ctx, *creds, *token)
 	if err != nil {
 		fatal(err)
 	}
