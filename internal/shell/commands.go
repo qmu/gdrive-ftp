@@ -247,18 +247,23 @@ func (s *Shell) cmdPut(args []string) error {
 	name := filepath.Base(local)
 	parent := s.cwd
 	if len(args) >= 2 {
-		dir, base := splitPath(args[1])
-		if strings.HasSuffix(args[1], "/") {
-			// Trailing slash: treat the whole arg as a destination directory.
-			dir, base = args[1], ""
-		}
-		if dir != "" || strings.HasPrefix(args[1], "/") {
-			if parent, err = s.resolveDir(dir); err != nil {
-				return err
+		dest := args[1]
+		// If the whole destination resolves to an existing folder, upload INTO it
+		// under the local basename (FTP-style, symmetric with get; a trailing
+		// slash resolves the same way). Only when it does not name an existing
+		// folder is the final component treated as the target filename (rename).
+		if stack, derr := s.resolveDir(dest); derr == nil {
+			parent = stack
+		} else {
+			dir, base := splitPath(dest)
+			if dir != "" || strings.HasPrefix(dest, "/") {
+				if parent, err = s.resolveDir(dir); err != nil {
+					return err
+				}
 			}
-		}
-		if base != "" {
-			name = base
+			if base != "" {
+				name = base
+			}
 		}
 	}
 

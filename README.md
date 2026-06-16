@@ -109,7 +109,7 @@ guard against CSRF.
 | `cd [dir]`             | Change remote directory. No argument (or `/`) goes to the virtual root listing all drives. |
 | `pwd`                  | Print the remote working directory.                     |
 | `get <remote> [local]` | Download a file. Google-native docs are exported (Docs→docx, Sheets→xlsx, Slides→pptx, Drawings→png). |
-| `put <local> [remote]` | Upload a local file. Re-uploading the same name replaces the file's content. |
+| `put <local> [remote]` | Upload a local file. If `remote` is an existing folder, the file is uploaded **into** it under its local name; otherwise `remote`'s final component is the target filename. Re-uploading the same name replaces that file's content. |
 | `mkdir <name>`         | Create a remote folder.                                 |
 | `rm <name>`            | Move a remote file/folder to the **trash** (reversible).|
 | `lcd [dir]`            | Change the *local* working directory.                   |
