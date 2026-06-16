@@ -117,6 +117,12 @@ Paths may be absolute (`/My Drive/Work/docs`) or relative (`../Photos`), and
 or a Shared Drive). Names containing spaces can be quoted: `cd "My Drive"`,
 `get "my file.pdf"`.
 
+**Tab completion** (like `sftp`): in the interactive shell, press **Tab** to
+complete command names, remote paths (folders and files fetched live from
+Drive — at the top level it completes drive names), and local paths for `lcd`/
+`lls`/`put`. When several entries match, they're listed above the prompt. (Only
+in an interactive terminal; piped/one-shot input is unaffected.)
+
 ## Notes & limitations
 
 - **Scope:** the app requests full Drive access

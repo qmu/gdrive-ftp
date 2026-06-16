@@ -14,6 +14,106 @@ import (
 	"google.golang.org/api/googleapi"
 )
 
+func TestFilterByPrefix(t *testing.T) {
+	names := []string{"Reports/", "Recipes/", "budget.xlsx", "notes"}
+	got := filterByPrefix(names, "Re")
+	want := []string{"Reports/", "Recipes/"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("filterByPrefix = %#v, want %#v", got, want)
+	}
+	if got := filterByPrefix(names, ""); len(got) != 4 {
+		t.Errorf("empty prefix should match all, got %d", len(got))
+	}
+	if got := filterByPrefix(names, "zzz"); got != nil {
+		t.Errorf("no match should be nil, got %#v", got)
+	}
+}
+
+func TestLongestCommonPrefix(t *testing.T) {
+	tests := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"Reports/", "Recipes/"}, "Re"},
+		{[]string{"abc", "abd", "abz"}, "ab"},
+		{[]string{"only/"}, "only/"},
+		{[]string{"a", "b"}, ""},
+		{nil, ""},
+	}
+	for _, tt := range tests {
+		if got := longestCommonPrefix(tt.in); got != tt.want {
+			t.Errorf("longestCommonPrefix(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestQuoteArg(t *testing.T) {
+	if got := quoteArg("plain"); got != "plain" {
+		t.Errorf("quoteArg(plain) = %q, want plain", got)
+	}
+	if got := quoteArg("my file"); got != `"my file"` {
+		t.Errorf(`quoteArg("my file") = %q, want "my file"`, got)
+	}
+}
+
+func TestLastTokenStart(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{"", 0},
+		{"ls", 0},
+		{"ls ", 3},      // trailing space → new token at end
+		{"ls Wo", 3},    // active token "Wo" starts at 3
+		{"cd a/b/c", 3}, // whole path is one token
+		{`get "my fi`, 4},
+	}
+	for _, tt := range tests {
+		if got := lastTokenStart(tt.in); got != tt.want {
+			t.Errorf("lastTokenStart(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestArgKind(t *testing.T) {
+	tests := []struct {
+		verb string
+		idx  int
+		want string
+	}{
+		{"ls", 1, "remote"},
+		{"cd", 1, "remote"},
+		{"get", 1, "remote"},
+		{"get", 2, "local"},
+		{"put", 1, "local"},
+		{"put", 2, "remote"},
+		{"lcd", 1, "local"},
+		{"pwd", 1, ""},
+		{"ls", 2, ""},
+	}
+	for _, tt := range tests {
+		if got := argKind(tt.verb, tt.idx); got != tt.want {
+			t.Errorf("argKind(%q,%d) = %q, want %q", tt.verb, tt.idx, got, tt.want)
+		}
+	}
+}
+
+func TestCompletionVerbs(t *testing.T) {
+	verbs := completionVerbs()
+	for _, want := range []string{"ls", "cd", "get", "put", "quit", "exit", "bye"} {
+		found := false
+		for _, v := range verbs {
+			if v == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("completionVerbs missing %q", want)
+		}
+	}
+}
+
 func TestFriendlyErr(t *testing.T) {
 	if friendlyErr(nil) != nil {
 		t.Error("friendlyErr(nil) should be nil")

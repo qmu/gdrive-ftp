@@ -17,6 +17,7 @@ import (
 
 	drive "google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
+	"golang.org/x/term"
 )
 
 // myDriveName is the label of the synthetic My Drive entry shown at the virtual
@@ -29,10 +30,11 @@ const myDriveName = "My Drive"
 // available drives. The first element of a non-empty cwd is always a drive
 // (My Drive or a Shared Drive) and carries its DriveID.
 type Shell struct {
-	ctx context.Context
-	c   *gdrive.Client
-	cwd []gdrive.Ref // path from the virtual root; empty means the virtual root
-	out io.Writer
+	ctx  context.Context
+	c    *gdrive.Client
+	cwd  []gdrive.Ref // path from the virtual root; empty means the virtual root
+	out  io.Writer
+	term *term.Terminal // set only while the interactive line editor is active
 }
 
 // New creates a Shell positioned at the virtual root, which lists My Drive and
@@ -51,9 +53,18 @@ type command struct {
 // commands is the dispatch table, populated in commands.go.
 var commands map[string]command
 
-// Run reads commands until EOF (Ctrl-D) or a quit verb. When interactive it
-// prints a prompt before each line.
+// Run reads commands until EOF (Ctrl-D) or a quit verb. When interactive and
+// stdin is a terminal it uses a line editor with Tab completion; otherwise it
+// falls back to a plain line scanner (pipes, one-shot, non-TTY).
 func (s *Shell) Run(interactive bool) error {
+	if interactive && term.IsTerminal(int(os.Stdin.Fd())) {
+		return s.runTerminal()
+	}
+	return s.runScanner(interactive)
+}
+
+// runScanner is the plain, non-interactive read loop (no line editing).
+func (s *Shell) runScanner(interactive bool) error {
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for {
@@ -79,6 +90,73 @@ func (s *Shell) Run(interactive bool) error {
 		}
 	}
 	return sc.Err()
+}
+
+// runTerminal drives the interactive shell through a raw-mode line editor
+// (golang.org/x/term) so the user gets line editing and Tab completion. It
+// degrades to runScanner if raw mode cannot be entered. While active, command
+// output is routed through a CRLF-translating writer so plain "\n" lines render
+// correctly in raw mode.
+func (s *Shell) runTerminal() error {
+	fd := int(os.Stdin.Fd())
+	old, err := term.MakeRaw(fd)
+	if err != nil {
+		return s.runScanner(true)
+	}
+	defer term.Restore(fd, old)
+
+	rw := struct {
+		io.Reader
+		io.Writer
+	}{os.Stdin, os.Stdout}
+	t := term.NewTerminal(rw, "")
+	t.AutoCompleteCallback = s.autoComplete
+	s.term = t
+	prevOut := s.out
+	s.out = crlfWriter{os.Stdout}
+	defer func() { s.term = nil; s.out = prevOut }()
+
+	for {
+		t.SetPrompt(fmt.Sprintf("gdrive:%s> ", s.pwd()))
+		line, err := t.ReadLine()
+		if errors.Is(err, io.EOF) {
+			fmt.Fprint(s.out, "\n")
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		args, perr := tokenize(line)
+		if perr != nil {
+			fmt.Fprintln(s.out, "parse error:", perr)
+			continue
+		}
+		if len(args) == 0 {
+			continue
+		}
+		if quit := s.dispatch(args); quit {
+			return nil
+		}
+	}
+}
+
+// crlfWriter translates a lone "\n" into "\r\n" so command output prints
+// correctly while the terminal is in raw mode.
+type crlfWriter struct{ w io.Writer }
+
+func (c crlfWriter) Write(p []byte) (int, error) {
+	out := make([]byte, 0, len(p)+8)
+	for _, b := range p {
+		if b == '\n' {
+			out = append(out, '\r', '\n')
+		} else {
+			out = append(out, b)
+		}
+	}
+	if _, err := c.w.Write(out); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // Execute runs a single command (non-interactive one-shot mode).
@@ -148,6 +226,246 @@ func projectNumber(msg string) string {
 		return m[1]
 	}
 	return ""
+}
+
+// --- Tab completion ---
+
+// autoComplete is the term.Terminal callback. It acts only on Tab: it completes
+// the active token (command verb, remote path, or local path) and, when several
+// candidates remain, prints them above the prompt like sftp.
+func (s *Shell) autoComplete(line string, pos int, key rune) (string, int, bool) {
+	if key != '\t' {
+		return "", 0, false
+	}
+	left := line[:pos]
+	newLeft, candidates := s.completeInput(left)
+	if len(candidates) > 1 && s.term != nil {
+		fmt.Fprintf(s.term, "\r\n%s\r\n", strings.Join(candidates, "  "))
+	}
+	if newLeft == left {
+		return "", 0, false
+	}
+	return newLeft + line[pos:], len(newLeft), true
+}
+
+// completeInput computes the completion for the text left of the cursor. It
+// returns the rewritten left text (unchanged if nothing to complete) and, when
+// the result is ambiguous, the list of candidate names to display.
+func (s *Shell) completeInput(left string) (string, []string) {
+	toks, err := tokenize(left)
+	if err != nil { // e.g. an unterminated quote — don't guess
+		return left, nil
+	}
+	endsSpace := left == "" || strings.HasSuffix(left, " ") || strings.HasSuffix(left, "\t")
+	idx, active := len(toks), ""
+	if !endsSpace && len(toks) > 0 {
+		idx, active = len(toks)-1, toks[idx-1]
+	}
+
+	// Gather candidate names for this position.
+	var names []string
+	if idx == 0 {
+		names = completionVerbs()
+	} else {
+		dir, _ := splitPath(active)
+		switch argKind(toks[0], idx) {
+		case "remote":
+			names = s.remoteNames(dir)
+		case "local":
+			names = s.localNames(dir)
+		default:
+			return left, nil
+		}
+	}
+
+	base := active
+	if idx > 0 {
+		_, base = splitPath(active)
+	}
+	matches := filterByPrefix(names, base)
+	if len(matches) == 0 {
+		return left, nil
+	}
+
+	// Build the completed token: keep the directory prefix, replace the base.
+	completedBase := longestCommonPrefix(matches)
+	pathPart := completedBase
+	if idx > 0 {
+		dir, _ := splitPath(active)
+		pathPart = dir + completedBase
+	}
+	rendered := quoteArg(pathPart)
+	// A single, fully-resolved file gets a trailing space; a directory (ends in
+	// "/") does not, so the user can Tab straight into it.
+	if len(matches) == 1 && !strings.HasSuffix(matches[0], "/") {
+		rendered += " "
+	}
+
+	newLeft := left[:lastTokenStart(left)] + rendered
+	if len(matches) > 1 {
+		return newLeft, matches
+	}
+	return newLeft, nil
+}
+
+// completionVerbs returns the command verbs offered for first-token completion.
+func completionVerbs() []string {
+	names := append(sortedCommandNames(), "quit", "exit", "bye")
+	sort.Strings(names)
+	return names
+}
+
+// argKind reports whether argument argIndex of verb names a remote path, a
+// local path, or neither (no completion).
+func argKind(verb string, argIndex int) string {
+	switch verb {
+	case "ls", "cd", "rm", "mkdir":
+		if argIndex == 1 {
+			return "remote"
+		}
+	case "get":
+		switch argIndex {
+		case 1:
+			return "remote"
+		case 2:
+			return "local"
+		}
+	case "put":
+		switch argIndex {
+		case 1:
+			return "local"
+		case 2:
+			return "remote"
+		}
+	case "lcd", "lls":
+		if argIndex == 1 {
+			return "local"
+		}
+	}
+	return ""
+}
+
+// remoteNames lists the entries of remote directory dir (relative to the cwd or
+// absolute) as completion candidates, folders suffixed with "/". At the virtual
+// root it returns the drive names. Any error yields no candidates.
+func (s *Shell) remoteNames(dir string) []string {
+	stack, err := s.resolveDir(dir)
+	if err != nil {
+		return nil
+	}
+	if len(stack) == 0 {
+		drives, err := s.driveList()
+		if err != nil {
+			return nil
+		}
+		names := make([]string, 0, len(drives))
+		for _, d := range drives {
+			names = append(names, d.Name+"/")
+		}
+		return names
+	}
+	files, err := s.c.List(s.ctx, currentDriveID(stack), currentID(stack))
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		n := f.Name
+		if gdrive.IsFolder(f) {
+			n += "/"
+		}
+		names = append(names, n)
+	}
+	return names
+}
+
+// localNames lists the entries of local directory dir as completion candidates,
+// directories suffixed with "/". Any error yields no candidates.
+func (s *Shell) localNames(dir string) []string {
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() {
+			n += "/"
+		}
+		names = append(names, n)
+	}
+	return names
+}
+
+// filterByPrefix returns the names that start with prefix.
+func filterByPrefix(names []string, prefix string) []string {
+	var out []string
+	for _, n := range names {
+		if strings.HasPrefix(n, prefix) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// longestCommonPrefix returns the longest string that prefixes every name.
+func longestCommonPrefix(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	p := names[0]
+	for _, n := range names[1:] {
+		for !strings.HasPrefix(n, p) {
+			p = p[:len(p)-1]
+			if p == "" {
+				return ""
+			}
+		}
+	}
+	return p
+}
+
+// quoteArg double-quotes s when it contains a space so it round-trips through
+// tokenize; otherwise it is returned unchanged.
+func quoteArg(s string) string {
+	if strings.ContainsAny(s, " \t") {
+		return `"` + s + `"`
+	}
+	return s
+}
+
+// lastTokenStart returns the byte index in s where the final token begins, or
+// len(s) when s ends at a token boundary (so a new token starts there). It
+// honors single and double quotes the same way tokenize does.
+func lastTokenStart(s string) int {
+	start, inToken := 0, false
+	var quote rune
+	for i, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '\'' || r == '"':
+			if !inToken {
+				start, inToken = i, true
+			}
+			quote = r
+		case r == ' ' || r == '\t':
+			inToken = false
+		default:
+			if !inToken {
+				start, inToken = i, true
+			}
+		}
+	}
+	if !inToken {
+		return len(s)
+	}
+	return start
 }
 
 // dispatch runs one parsed command line; it returns true when the session

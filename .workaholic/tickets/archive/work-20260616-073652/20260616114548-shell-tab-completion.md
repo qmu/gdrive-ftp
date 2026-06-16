@@ -3,9 +3,9 @@ created_at: 2026-06-16T11:45:48+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [UX, Domain]
-effort:
-commit_hash:
-category:
+effort: 1h
+commit_hash: f5d053d
+category: Added
 depends_on:
 ---
 
@@ -143,3 +143,34 @@ the drive-context path model.
   scope (and largely impossible for live remote paths). If line history /
   arrow-key recall is wanted too, treat it as a follow-up — `term.Terminal`
   gives basic history but a richer setup may warrant its own ticket.
+
+## Final Report
+
+Development completed as planned, using `golang.org/x/term`'s `term.Terminal`
+with an `AutoCompleteCallback` (no new dependency). `Run` now branches: a
+raw-mode line editor (`runTerminal`) when stdin is a TTY, else the original
+scanner (`runScanner`). Completion covers command verbs, remote Drive paths
+(drive names at the virtual root), and local paths, with multi-candidate listing
+above the prompt. Pure helpers (`filterByPrefix`, `longestCommonPrefix`,
+`quoteArg`, `lastTokenStart`, `argKind`, `completionVerbs`) are unit-tested.
+
+### Discovered Insights
+
+- **Insight**: raw mode (`term.MakeRaw`) breaks every existing
+  `fmt.Fprintf(s.out, ...\n)` because a lone `\n` doesn't return the carriage.
+  Rather than touch every command, `runTerminal` swaps `s.out` for a small
+  `crlfWriter` that translates `\n`→`\r\n` for the duration of the session and
+  restores it on exit — commands stay unchanged and non-interactive output is
+  unaffected.
+  **Context**: any future interactive/raw-mode feature should reuse `crlfWriter`
+  rather than editing command output.
+- **Insight**: `term.Terminal`'s `AutoCompleteCallback` can only return a single
+  replacement string, not a candidate menu. sftp-style "show the options" is
+  done by writing the list to the terminal (`s.term`) inside the callback, then
+  returning the longest-common-prefix completion; `term.Terminal` redraws the
+  prompt + line afterward.
+- **Insight**: completion can't reuse `tokenize` alone for splicing because the
+  raw text positions (with quotes) differ from the unquoted tokens; a dedicated
+  `lastTokenStart` scanner (quote-aware, mirroring `tokenize`) finds where to
+  replace. Unterminated quotes make `tokenize` error, so Tab is a no-op there —
+  an accepted limitation.
