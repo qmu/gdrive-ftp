@@ -109,7 +109,7 @@ guard against CSRF.
 | `cd [dir]`             | Change remote directory. No argument (or `/`) goes to the virtual root listing all drives. |
 | `pwd`                  | Print the remote working directory.                     |
 | `get <remote> [local]` | Download a file. Google-native docs are exported (Docs→docx, Sheets→xlsx, Slides→pptx, Drawings→png). |
-| `put <local> [remote]` | Upload a local file. Re-uploading the same name replaces the file's content. |
+| `put <local> [remote]` | Upload a local file. If `remote` is an existing folder, the file is uploaded **into** it under its local name; otherwise `remote`'s final component is the target filename. Re-uploading the same name replaces that file's content. |
 | `mkdir <name>`         | Create a remote folder.                                 |
 | `rm <name>`            | Move a remote file/folder to the **trash** (reversible).|
 | `lcd [dir]`            | Change the *local* working directory.                   |
@@ -156,10 +156,19 @@ brief pause on large folders.
   refuses the operation (`ambiguous name`) rather than guess a target — so `rm`
   and `put` never act on the wrong file. `cd` requires the name to resolve to a
   single folder.
+- **Transfers are byte-for-byte binary.** `put` streams your file straight to
+  Drive's media-upload endpoint and `get` writes the raw response to disk — no
+  base64, no JSON envelope, no conversion. PDFs, Office files (DOCX/XLSX/PPTX),
+  ZIPs, images, and arbitrary binaries upload and download identically (verified
+  by SHA-256 round-trip), at any size — unlike API clients that wrap content as
+  text/base64 and choke on binary or large files. (Uploaded Office files stay
+  binary; only Google-*native* Docs/Sheets/Slides are exported on `get`.)
 - **`get` is atomic**: it downloads to a temp file and renames it into place
   only on full success, so an interrupted transfer never corrupts an existing
-  local copy. Passing an existing directory (or a trailing `/`) as the
-  destination drops the file inside it under its remote name.
+  local copy. A binary download is also length-checked against Drive's reported
+  size, so a truncated transfer fails loudly instead of silently. Passing an
+  existing directory (or a trailing `/`) as the destination drops the file
+  inside it under its remote name.
 - Directory upload/download is not supported (single files only), matching the
   minimal FTP feature set.
 - **Drives:** the session starts at a virtual root listing **My Drive** and every
