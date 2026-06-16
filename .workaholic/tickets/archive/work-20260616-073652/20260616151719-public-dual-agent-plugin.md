@@ -3,9 +3,9 @@ created_at: 2026-06-16T15:17:19+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [Config, UX]
-effort:
-commit_hash:
-category:
+effort: 0.5h
+commit_hash: a6acf2d
+category: Changed
 depends_on:
 ---
 
@@ -172,3 +172,29 @@ Direct foundation (this packages and distributes it):
   binary is meant to be `go install`-able from the public URL (out of scope here).
 - **README is the spec (docs-in-sync lens)**: keep README and SKILL.md consistent
   after edits.
+
+## Final Report
+
+Development completed as planned. Added both marketplaces
+(`.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`) and both
+plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`),
+`git mv`-d the skill into `plugins/gdrive-ftp/skills/gdrive-ftp/` with a
+`.claude/skills/gdrive-ftp` dev symlink so it still auto-loads in-repo, added an
+MIT `LICENSE`, genericized the GCP project number in `shell_test.go`
+(651063897762 → 123456789012), and gave the README an install matrix + a
+`> [!WARNING]` Drive-access caveat. No build/`dist/` step (pure-docs skill).
+`go build`/`vet`/`test` green; all four manifests valid JSON; plugin name ==
+directory; no secrets staged.
+
+### Discovered Insights
+
+- **Insight**: the Codex marketplace schema differs from Claude's — Codex
+  (`.agents/plugins/marketplace.json`) uses `source: {source:"local", path}` and
+  `policy: {installation, authentication}`, while the per-plugin Codex manifest
+  (`.codex-plugin/plugin.json`) carries the public extras (`repository`,
+  `license`, `keywords`, `skills: "./skills/"`) that the Claude manifest omits.
+  Both were verified verbatim against `../workaholic` before writing.
+- **Insight**: because the skill is pure prose (no `${CLAUDE_PLUGIN_ROOT}`, no
+  scripts), the whole workaholic `scripts/build-plugins` + `dist/` generator is
+  unnecessary — one `skills/` dir is consumed directly by Claude, Codex, and the
+  skills CLI. The generator exists only to self-contain script-bearing skills.

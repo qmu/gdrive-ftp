@@ -5,6 +5,12 @@ familiar interactive shell — `ls`, `cd`, `pwd`, `get` (download), `put`
 (upload), `mkdir`, `rm` — that talks to your Drive over the official Drive v3
 API.
 
+> [!WARNING]
+> This requests **full Drive access** and can upload, overwrite (`put` replaces
+> a same-named file's content), and trash files across My Drive and your Shared
+> Drives. `rm` trashes (reversible); nothing is hard-deleted. Keep
+> `credentials.json` / `token.json` private — they grant access to your Drive.
+
 The shell opens at a **virtual root** that lists *My Drive* alongside every
 Shared Drive you can access; the drive name is the first component of every path.
 
@@ -166,24 +172,32 @@ brief pause on large folders.
 ## Project layout
 
 ```
-main.go                          CLI wiring, flags, interactive vs one-shot
-internal/auth/auth.go            OAuth2 consent flow + token caching/refresh
-internal/gdrive/client.go        Drive v3 wrapper (list/find/upload/download/export/trash)
-internal/shell/shell.go          REPL, path resolution, tokenizer
-internal/shell/commands.go       Command implementations
-.claude/skills/gdrive-ftp/       Claude Code skill: how to drive this CLI
+main.go                                   CLI wiring, flags, interactive vs one-shot
+internal/auth/auth.go                     OAuth2 consent flow + token caching/refresh
+internal/gdrive/client.go                 Drive v3 wrapper (list/find/upload/download/export/trash)
+internal/shell/shell.go                   REPL, path resolution, tokenizer, completion
+internal/shell/commands.go                Command implementations
+plugins/gdrive-ftp/skills/gdrive-ftp/     The agent skill (how to drive this CLI)
+.claude-plugin/marketplace.json           Claude Code plugin marketplace
+.agents/plugins/marketplace.json          Codex plugin marketplace
 ```
 
-## Claude Code skill
+## Agent skill / plugin
 
-`.claude/skills/gdrive-ftp/SKILL.md` is a [Claude Code](https://claude.com/claude-code)
-skill that teaches a Claude session how to use this CLI for Google Drive
-operations (one-shot commands, the drive/path model, auth prerequisite, and
-gotchas). A session running with this repo as its working directory discovers it
-automatically. To make it loadable from anywhere, symlink (or copy) it onto your
-personal skills path:
+This repo ships a skill that teaches a coding agent how to drive the CLI for
+Google Drive (one-shot commands, the drive/path model, auth prerequisite, and
+gotchas). It installs as a plugin on Claude Code and OpenAI Codex, or via the
+cross-agent skills CLI:
 
-```sh
-mkdir -p ~/.claude/skills
-ln -s "$PWD/.claude/skills/gdrive-ftp" ~/.claude/skills/gdrive-ftp
-```
+| Agent | Install |
+| ----- | ------- |
+| **Claude Code** | `/plugin marketplace add qmu/gdrive-ftp`, then enable the `gdrive-ftp` plugin |
+| **OpenAI Codex** | `codex plugin marketplace add qmu/gdrive-ftp --ref main`<br>`codex plugin add gdrive-ftp@gdrive-ftp` |
+| **Cursor / OpenCode / others** | `npx skills add qmu/gdrive-ftp` |
+
+> The plugin ships the **skill**; the `gdrive-ftp` **binary** must be built or
+> installed separately (see [Build](#build)) and on your `PATH`. Authorize once
+> with `gdrive-ftp auth` before agent use.
+
+A Claude session working with this repo as its cwd also auto-discovers the skill
+(via `.claude/skills/gdrive-ftp`, a symlink into `plugins/`); no install needed.

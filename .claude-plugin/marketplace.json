@@ -1,0 +1,25 @@
+{
+  "name": "gdrive-ftp",
+  "version": "1.0.0",
+  "description": "FTP-style CLI for Google Drive, plus a skill teaching coding agents to drive it",
+  "owner": {
+    "name": "tamurayoshiya",
+    "email": "a@qmu.jp"
+  },
+  "plugins": [
+    {
+      "name": "gdrive-ftp",
+      "description": "Use when a task needs to read or modify the user's Google Drive from the command line — list/navigate My Drive and Shared Drives, download, upload, mkdir, trash — via the gdrive-ftp CLI.",
+      "version": "1.0.0",
+      "author": {
+        "name": "tamurayoshiya",
+        "email": "a@qmu.jp"
+      },
+      "source": "./plugins/gdrive-ftp",
+      "category": "development",
+      "skills": [
+        "./skills/gdrive-ftp"
+      ]
+    }
+  ]
+}
