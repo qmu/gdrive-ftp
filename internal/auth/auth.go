@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"golang.org/x/term"
 	drive "google.golang.org/api/drive/v3"
 )
 
@@ -72,47 +73,94 @@ func tokenFromWeb(ctx context.Context, config *oauth2.Config) (*oauth2.Token, er
 }
 
 // consentFlow runs the terminal OAuth consent flow used everywhere (local or
-// SSH). It prints the consent URL and offers an interactive prompt: 'c' copies
-// the URL to the user's local clipboard via the OSC 52 terminal escape (the
-// only channel that reaches a laptop over SSH), 'o' attempts to open a local
-// browser, and anything else falls through to manual copy. After authorizing,
-// the user pastes the entire http://127.0.0.1:1/...?state=...&code=... redirect
-// URL their browser lands on; we extract the code and validate the state.
+// SSH). It prints the consent URL and offers a single-keypress prompt: 'c'
+// copies the URL to the user's local clipboard via the OSC 52 terminal escape
+// (the only channel that reaches a laptop over SSH), 'o' attempts to open a
+// local browser, and any other key falls through to manual copy. After
+// authorizing, the user pastes the entire http://127.0.0.1:1/...?state=...&code=...
+// redirect URL their browser lands on; we extract the code and validate state.
 func consentFlow(ctx context.Context, config *oauth2.Config, state string) (*oauth2.Token, error) {
 	config.RedirectURL = "http://127.0.0.1:1/"
 	authURL := config.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 
-	reader := bufio.NewReader(os.Stdin)
 	fmt.Fprintf(os.Stderr,
 		"To authorize gdrive-ftp, open this URL in your local browser:\n\n%s\n\n", authURL)
-	fmt.Fprint(os.Stderr,
-		"Press 'c' then Enter to copy the URL to your local clipboard, "+
-			"'o' then Enter to try opening it in a browser here, "+
-			"or just copy it manually, then press Enter: ")
-	choice, err := reader.ReadString('\n')
-	if err != nil {
-		return nil, fmt.Errorf("reading choice: %w", err)
-	}
-	switch strings.ToLower(strings.TrimSpace(choice)) {
-	case "c":
+	switch promptKey("Press 'c' to copy the URL to your local clipboard, 'o' to open it in a browser here, or any other key to copy it yourself: ") {
+	case 'c':
 		copyToClipboard(authURL)
 		fmt.Fprintln(os.Stderr, "Copied to clipboard.")
-	case "o":
+	case 'o':
 		openBrowser(authURL)
 	}
 
 	fmt.Fprint(os.Stderr,
 		"\nAfter you authorize, the browser redirects to a http://127.0.0.1:1/...\n"+
 			"URL that fails to load. Paste that entire URL here (or just the code): ")
-	line, err := reader.ReadString('\n')
+	line, err := readLine()
 	if err != nil {
 		return nil, fmt.Errorf("reading redirect URL: %w", err)
 	}
-	code, err := codeFromRedirect(strings.TrimSpace(line), state)
+	code, err := codeFromRedirect(line, state)
 	if err != nil {
 		return nil, err
 	}
 	return config.Exchange(ctx, code)
+}
+
+// promptKey prints prompt and reads one keypress without waiting for Enter,
+// returning it lowercased. When stdin is not a terminal (e.g. piped input) it
+// falls back to reading a whole line and using its first character.
+func promptKey(prompt string) byte {
+	fmt.Fprint(os.Stderr, prompt)
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		line, _ := readLine()
+		if line == "" {
+			fmt.Fprintln(os.Stderr)
+			return 0
+		}
+		return lowerASCII(line[0])
+	}
+	old, err := term.MakeRaw(fd)
+	if err != nil {
+		line, _ := readLine()
+		if line == "" {
+			return 0
+		}
+		return lowerASCII(line[0])
+	}
+	var b [1]byte
+	n, _ := os.Stdin.Read(b[:])
+	_ = term.Restore(fd, old)
+	if n == 0 {
+		fmt.Fprintln(os.Stderr)
+		return 0
+	}
+	fmt.Fprintf(os.Stderr, "%c\n", b[0]) // echo the key (raw mode suppresses it)
+	return lowerASCII(b[0])
+}
+
+// readLine reads a single non-blank line from stdin, skipping stray blank lines
+// (e.g. a leftover newline after the single-key prompt).
+func readLine() (string, error) {
+	r := bufio.NewReader(os.Stdin)
+	for {
+		l, err := r.ReadString('\n')
+		if s := strings.TrimSpace(l); s != "" {
+			return s, nil
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+}
+
+// lowerASCII lowercases an ASCII byte.
+func lowerASCII(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
 }
 
 // codeFromRedirect extracts the OAuth authorization code from a pasted redirect
@@ -136,13 +184,32 @@ func codeFromRedirect(input, state string) (string, error) {
 	return input, nil
 }
 
-// copyToClipboard writes the OSC 52 terminal escape sequence to stderr, which a
-// terminal emulator forwards to the local clipboard even across SSH. This is
-// the only clipboard channel that reaches the user's laptop on a remote host,
-// so we deliberately do not shell out to xclip/pbcopy.
+// copyToClipboard puts s on the user's local clipboard via the OSC 52 terminal
+// escape, which a terminal emulator honors even across SSH — so we deliberately
+// do not shell out to xclip/pbcopy (those target the remote host). Inside tmux
+// the sequence is wrapped in the DCS passthrough so it reaches the outer
+// terminal instead of being swallowed; it is written to the controlling
+// terminal (/dev/tty) so it works even when stderr is redirected.
 func copyToClipboard(s string) {
-	enc := base64.StdEncoding.EncodeToString([]byte(s))
-	fmt.Fprintf(os.Stderr, "\x1b]52;c;%s\x07", enc)
+	seq := clipboardSeq(s)
+	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
+		fmt.Fprint(tty, seq)
+		tty.Close()
+		return
+	}
+	fmt.Fprint(os.Stderr, seq)
+}
+
+// clipboardSeq builds the OSC 52 escape that sets the clipboard to s. Inside
+// tmux it is wrapped in the DCS passthrough (DCS prefix, every ESC doubled, ST
+// terminator) so the escape reaches the outer terminal instead of being
+// swallowed by tmux.
+func clipboardSeq(s string) string {
+	seq := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(s)) + "\x07"
+	if os.Getenv("TMUX") != "" {
+		seq = "\x1bPtmux;" + strings.ReplaceAll(seq, "\x1b", "\x1b\x1b") + "\x1b\\"
+	}
+	return seq
 }
 
 // savingSource is an oauth2.TokenSource that persists the token whenever the

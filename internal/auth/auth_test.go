@@ -2,8 +2,6 @@ package auth
 
 import (
 	"encoding/base64"
-	"io"
-	"os"
 	"testing"
 )
 
@@ -54,27 +52,26 @@ func TestCodeFromRedirect(t *testing.T) {
 	}
 }
 
-// TestCopyToClipboard verifies the OSC 52 escape sequence framing and base64
-// payload written to stderr.
-func TestCopyToClipboard(t *testing.T) {
+// TestClipboardSeq verifies the OSC 52 framing and base64 payload, plain and
+// wrapped for tmux passthrough.
+func TestClipboardSeq(t *testing.T) {
 	const url = "https://accounts.google.com/o/oauth2/auth?x=1"
+	b64 := base64.StdEncoding.EncodeToString([]byte(url))
 
-	old := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
-	copyToClipboard(url)
-	w.Close()
-	os.Stderr = old
+	t.Run("plain", func(t *testing.T) {
+		t.Setenv("TMUX", "")
+		want := "\x1b]52;c;" + b64 + "\x07"
+		if got := clipboardSeq(url); got != want {
+			t.Errorf("clipboardSeq = %q, want %q", got, want)
+		}
+	})
 
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "\x1b]52;c;" + base64.StdEncoding.EncodeToString([]byte(url)) + "\x07"
-	if string(out) != want {
-		t.Errorf("copyToClipboard wrote %q, want %q", out, want)
-	}
+	t.Run("tmux passthrough", func(t *testing.T) {
+		t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+		// Expected: DCS prefix + OSC 52 with every ESC doubled + ST terminator.
+		want := "\x1bPtmux;\x1b\x1b]52;c;" + b64 + "\x07\x1b\\"
+		if got := clipboardSeq(url); got != want {
+			t.Errorf("clipboardSeq(tmux) = %q, want %q", got, want)
+		}
+	})
 }
