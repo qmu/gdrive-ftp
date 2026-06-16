@@ -5,6 +5,7 @@ package shell
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"gdrive-ftp/internal/gdrive"
 
 	drive "google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 )
 
 // myDriveName is the label of the synthetic My Drive entry shown at the virtual
@@ -90,7 +92,33 @@ func (s *Shell) Execute(args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown command %q (try 'help')", args[0])
 	}
-	return cmd.run(s, args[1:])
+	return friendlyErr(cmd.run(s, args[1:]))
+}
+
+// friendlyErr rewrites well-known Drive API misconfigurations into an
+// actionable message instead of surfacing the raw googleapi JSON dump. Unknown
+// errors pass through unchanged.
+func friendlyErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ge *googleapi.Error
+	if errors.As(err, &ge) && ge.Code == 403 {
+		disabled := strings.Contains(ge.Message, "has not been used in project") ||
+			strings.Contains(err.Error(), "SERVICE_DISABLED")
+		for _, e := range ge.Errors {
+			if e.Reason == "accessNotConfigured" {
+				disabled = true
+			}
+		}
+		if disabled {
+			return errors.New("the Google Drive API is disabled for this OAuth client's Google Cloud project.\n" +
+				"Enable it, wait ~1 minute for it to propagate, then retry:\n" +
+				"  • Console: https://console.cloud.google.com/apis/library/drive.googleapis.com\n" +
+				"  • or:      gcloud services enable drive.googleapis.com --project=<your-project-id>")
+		}
+	}
+	return err
 }
 
 // dispatch runs one parsed command line; it returns true when the session
@@ -107,7 +135,7 @@ func (s *Shell) dispatch(args []string) (quit bool) {
 		return false
 	}
 	if err := cmd.run(s, rest); err != nil {
-		fmt.Fprintf(s.out, "%s: %v\n", name, err)
+		fmt.Fprintf(s.out, "%s: %v\n", name, friendlyErr(err))
 	}
 	return false
 }

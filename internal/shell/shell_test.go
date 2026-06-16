@@ -6,10 +6,37 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"gdrive-ftp/internal/gdrive"
+
+	"google.golang.org/api/googleapi"
 )
+
+func TestFriendlyErr(t *testing.T) {
+	if friendlyErr(nil) != nil {
+		t.Error("friendlyErr(nil) should be nil")
+	}
+
+	plain := errors.New("boom")
+	if got := friendlyErr(plain); got != plain {
+		t.Errorf("plain error should pass through unchanged, got %v", got)
+	}
+
+	disabled := &googleapi.Error{
+		Code:    403,
+		Message: "Google Drive API has not been used in project 651063897762 before or it is disabled.",
+		Errors:  []googleapi.ErrorItem{{Reason: "accessNotConfigured"}},
+	}
+	got := friendlyErr(disabled)
+	if got == disabled || !strings.Contains(got.Error(), "Google Drive API is disabled") {
+		t.Errorf("disabled-API error not rewritten: %v", got)
+	}
+	if !strings.Contains(got.Error(), "console.cloud.google.com") {
+		t.Errorf("rewritten error should include the enable URL: %v", got)
+	}
+}
 
 // drive stacks used across the virtual-root path tests.
 var (
