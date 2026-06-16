@@ -211,7 +211,11 @@ func (s *Shell) driveList() ([]gdrive.Ref, error) {
 	}
 	out := make([]gdrive.Ref, 0, len(shared)+1)
 	out = append(out, gdrive.Ref{ID: gdrive.RootID, Name: myDriveName, DriveID: ""})
-	out = append(out, shared...)
+	for _, d := range shared {
+		// A Shared Drive's root folder ID is the drive ID; carry it as DriveID
+		// so listings/lookups inside it scope to that drive's corpus.
+		out = append(out, gdrive.Ref{ID: d.ID, Name: d.Name, DriveID: d.ID})
+	}
 	return out, nil
 }
 
