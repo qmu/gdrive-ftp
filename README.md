@@ -123,6 +123,20 @@ Drive — at the top level it completes drive names), and local paths for `lcd`/
 `lls`/`put`. When several entries match, they're listed above the prompt. (Only
 in an interactive terminal; piped/one-shot input is unaffected.)
 
+**zsh completion at your shell prompt** — to complete `gdrive-ftp ls <Tab>`
+directly in zsh (not inside the interactive shell), enable the bundled script.
+Add this to your `~/.zshrc` (after `compinit`):
+
+```zsh
+source <(gdrive-ftp completion zsh)
+```
+
+Then `gdrive-ftp ls <Tab>`, `gdrive-ftp cd qmu-<Tab>`, etc. complete remote
+Drive paths (and `gdrive-ftp put ./file <Tab>` completes the remote target).
+It uses your cached token and stays silent if you haven't authorized yet
+(run `gdrive-ftp auth` first). Each Tab makes a live Drive call, so expect a
+brief pause on large folders.
+
 ## Notes & limitations
 
 - **Scope:** the app requests full Drive access

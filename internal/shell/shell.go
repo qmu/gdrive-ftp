@@ -308,6 +308,41 @@ func (s *Shell) completeInput(left string) (string, []string) {
 	return newLeft, nil
 }
 
+// Complete returns shell-completion candidates for a command line given as the
+// already-split words after the program name, where the final word is the one
+// being completed (possibly empty). It powers external shell completion (e.g.
+// the zsh script) and reuses the same candidate logic as interactive Tab. Each
+// returned candidate is the full word value (directory prefix included), with
+// folders/drives suffixed by "/". Errors yield no candidates.
+func (s *Shell) Complete(words []string) []string {
+	if len(words) <= 1 {
+		prefix := ""
+		if len(words) == 1 {
+			prefix = words[0]
+		}
+		return filterByPrefix(completionVerbs(), prefix)
+	}
+	verb := words[0]
+	argIndex := len(words) - 1
+	cur := words[argIndex]
+	dir, base := splitPath(cur)
+	var names []string
+	switch argKind(verb, argIndex) {
+	case "remote":
+		names = s.remoteNames(dir)
+	case "local":
+		names = s.localNames(dir)
+	default:
+		return nil
+	}
+	matches := filterByPrefix(names, base)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, dir+m)
+	}
+	return out
+}
+
 // completionVerbs returns the command verbs offered for first-token completion.
 func completionVerbs() []string {
 	names := append(sortedCommandNames(), "quit", "exit", "bye")
