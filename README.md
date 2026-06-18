@@ -89,6 +89,7 @@ gdrive-ftp put ./photo.jpg /Photos/photo.jpg
 | `-creds`  | `./credentials.json` or config dir     | OAuth client `credentials.json`                    |
 | `-token`  | `~/.config/gdrive-ftp/token.json`      | Where to cache the auth token                      |
 | `-json`   | `false`                                | Emit machine-readable JSON instead of text         |
+| `-no-log` | `false`                                | Disable the audit log of Drive mutations           |
 
 ### Authorizing
 
@@ -206,6 +207,58 @@ $ gdrive-ftp -json get /nope
 
 The local-only interactive helpers (`lls`/`lpwd`/`lcd`) and `help` are unaffected
 by `-json`; so is Tab/zsh completion.
+
+## Audit log
+
+Every mutating operation — `put` (upload/overwrite), `rm` (trash), and `mkdir`
+(create) — is appended to a local **audit log** so you (or an AI agent driving the
+CLI) can look back at exactly what was changed in your Drive, and when. Read-only
+commands (`ls`, `cd`, `pwd`, `get`, `find`) are not logged.
+
+- **Location:** `~/.config/gdrive-ftp/audit.jsonl`, beside `token.json` (file
+  `0600`, directory `0700`).
+- **Format:** [JSON Lines](https://jsonlines.org/) — one compact JSON object per
+  line, append-only, so it is trivially `grep`/`jq`-able. Each record carries a
+  timestamp, the operation, the target name and Drive id, its parent/drive ids,
+  the working directory, and — for a `put` that overwrote an existing file —
+  `replaced: true` with the file's `priorSize`. It never contains your
+  credentials or any file contents.
+- **Rotation:** when the log reaches ~5 MB it rotates to `audit.jsonl.1` (then
+  `.2`, `.3`); the oldest segment is dropped, bounding disk use at ~20 MB.
+- **Recovery:** because each record includes the Drive id, you can act on it
+  directly — e.g. find a trashed file's id in the log and restore it, or re-`get`
+  a file by `id:` (a trashed file can also be restored from the Drive web UI).
+- **Disable:** pass `-no-log` to turn logging off for an invocation.
+
+```jsonl
+{"time":"2026-06-18T17:40:11+09:00","op":"trash","name":"old.pdf","id":"1A2b","size":840000,"cwd":"/My Drive/Work"}
+{"time":"2026-06-18T17:41:02+09:00","op":"upload","name":"report.pdf","id":"0Cd3","parentId":"0Bx","size":900000,"replaced":true,"priorSize":840000,"cwd":"/My Drive/Work"}
+```
+
+### Browsing the log
+
+`gdrive-ftp log` opens a small, read-only **`tig`-like browser** over the history
+(no new dependencies — it uses the same terminal library as the interactive
+shell):
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | move down |
+| `k` / `↑` | move up |
+| `g` / `G` | jump to top / bottom |
+| `Enter` | show the selected entry's full detail |
+| `q` / `Esc` / `Ctrl-C` | quit |
+
+It never modifies anything. When stdout is **not** a terminal (piped) or you pass
+`-json`, `gdrive-ftp log` instead prints the entries to stdout — plain rows, or a
+JSON array under `-json` — so scripts and AI agents read the same history without
+the TUI:
+
+```sh
+gdrive-ftp log              # interactive browser (in a terminal)
+gdrive-ftp -json log        # JSON array, for scripts/agents
+gdrive-ftp log | grep trash # plain rows, pipeable
+```
 
 ## Notes & limitations
 

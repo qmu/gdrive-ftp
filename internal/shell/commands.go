@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gdrive-ftp/internal/audit"
 	"gdrive-ftp/internal/gdrive"
 
 	drive "google.golang.org/api/drive/v3"
@@ -298,10 +299,21 @@ func (s *Shell) cmdPut(args []string) error {
 	if len(parent) == 0 {
 		return fmt.Errorf("cannot upload to the virtual root; cd into a drive first")
 	}
-	f, err := s.c.Upload(s.ctx, currentDriveID(parent), currentID(parent), name, in)
+	res, err := s.c.Upload(s.ctx, currentDriveID(parent), currentID(parent), name, in)
 	if err != nil {
 		return err
 	}
+	f := res.File
+	entry := audit.Entry{
+		Op: audit.OpUpload, Name: name, ID: f.Id,
+		ParentID: currentID(parent), DriveID: currentDriveID(parent),
+		Cwd: s.pwd(), Size: f.Size,
+	}
+	if res.Replaced != nil {
+		entry.Replaced = true
+		entry.PriorSize = res.Replaced.Size
+	}
+	s.audit(entry)
 	return s.emit(actionResult{Action: "uploaded", Name: name, ID: f.Id, Size: f.Size}, func() {
 		fmt.Fprintf(s.out, "uploaded %s -> %s (%s)\n", local, name, byteCount(f.Size))
 	})
@@ -333,6 +345,10 @@ func (s *Shell) cmdMkdir(args []string) error {
 	if err != nil {
 		return err
 	}
+	s.audit(audit.Entry{
+		Op: audit.OpMkdir, Name: f.Name, ID: f.Id,
+		ParentID: currentID(parent), DriveID: currentDriveID(parent), Cwd: s.pwd(),
+	})
 	return s.emit(actionResult{Action: "created", Name: f.Name, ID: f.Id}, func() {
 		fmt.Fprintf(s.out, "created %s/ (%s)\n", f.Name, f.Id)
 	})
@@ -349,6 +365,11 @@ func (s *Shell) cmdRm(args []string) error {
 	if err := s.c.Trash(s.ctx, f.Id); err != nil {
 		return err
 	}
+	entry := audit.Entry{Op: audit.OpTrash, Name: f.Name, ID: f.Id, Size: f.Size, Cwd: s.pwd()}
+	if len(f.Parents) > 0 {
+		entry.ParentID = f.Parents[0]
+	}
+	s.audit(entry)
 	return s.emit(actionResult{Action: "trashed", Name: f.Name, ID: f.Id}, func() {
 		fmt.Fprintf(s.out, "trashed %s\n", f.Name)
 	})

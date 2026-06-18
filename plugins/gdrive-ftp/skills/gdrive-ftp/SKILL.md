@@ -130,6 +130,32 @@ Contract: **results on stdout** (an array for `ls`; a single object for
 (`downloaded`/`exported`/`uploaded`/`created`/`trashed`) plus `dest`/`size`/`id`.
 Capture an `id` from a result and reuse it as `id:<id>` in a follow-up command.
 
+## Audit log (review what was changed)
+
+Every **mutating** operation you run — `put` (upload/overwrite), `rm` (trash),
+`mkdir` — is appended to `~/.config/gdrive-ftp/audit.jsonl` (JSON Lines,
+append-only). Read-only commands (`ls`/`cd`/`pwd`/`get`/`find`) are not logged.
+Use it to review or recover from changes (yours or another agent's): each record
+has a `time`, `op`, `name`, Drive `id`, `parentId`/`driveId`, `cwd`, `size`, and —
+for an overwriting `put` — `replaced:true` + `priorSize`. It never contains
+credentials or file contents.
+
+```sh
+# What did the CLI change recently? (newest last)
+tail ~/.config/gdrive-ftp/audit.jsonl
+# Everything trashed, as a list of ids you could restore:
+grep '"op":"trash"' ~/.config/gdrive-ftp/audit.jsonl | jq -r '.id'
+```
+
+Recover using the logged `id` (e.g. re-`get` by `id:<id>`; a trashed file can be
+restored from the Drive web UI). Pass `-no-log` to disable logging for a command.
+
+There is also a `gdrive-ftp log` subcommand. In a terminal it opens an
+interactive `j`/`k` browser (for humans); when piped or run with `-json` it prints
+the entries to stdout — **prefer `gdrive-ftp -json log`** to read the history as an
+array of entry objects without parsing the file yourself. It is read-only and
+needs no auth.
+
 ## Error / exit contract (for scripting)
 
 On failure, gdrive-ftp prints `gdrive-ftp: <message>` to **stderr** and exits
