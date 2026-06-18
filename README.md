@@ -123,6 +123,26 @@ Paths may be absolute (`/My Drive/Work/docs`) or relative (`../Photos`), and
 or a Shared Drive). Names containing spaces can be quoted: `cd "My Drive"`,
 `get "my file.pdf"`.
 
+**Addressing by Drive ID.** Anywhere a remote path is expected, an `id:<DriveID>`
+token targets a file or folder **directly by its Google Drive ID**, skipping name
+navigation. It is opt-in and unambiguous, so it never collides with a filename
+and needs no flag or mode — handy for scripts, and the only way to act on an item
+whose name is ambiguous or otherwise unreachable by path:
+
+```
+get   id:1A2b3CdEfGh ./report.pdf   # download a file by ID
+put   ./report.pdf id:0BxParent     # upload INTO a folder by ID
+rm    id:1A2b3CdEfGh                # trash a file/folder by ID
+ls    id:0BxParent                  # list a folder by ID
+cd    id:0BxParent                  # cd into a folder by ID
+mkdir id:0BxParent/NewFolder        # create under a parent folder by ID
+get   id:0BxParent/report.pdf       # an id: folder can anchor a longer path
+```
+
+A bare `id:` used where a folder is required (`cd`, `ls`, `put` target, the parent
+of `mkdir`) must resolve to a folder, else the command fails with `not a directory`.
+`mkdir id:<parent>` alone is rejected — append `/<name>` for the new folder.
+
 **Tab completion** (like `sftp`): in the interactive shell, press **Tab** to
 complete command names, remote paths (folders and files fetched live from
 Drive — at the top level it completes drive names), and local paths for `lcd`/

@@ -248,11 +248,20 @@ func (s *Shell) cmdPut(args []string) error {
 	parent := s.cwd
 	if len(args) >= 2 {
 		dest := args[1]
-		// If the whole destination resolves to an existing folder, upload INTO it
-		// under the local basename (FTP-style, symmetric with get; a trailing
-		// slash resolves the same way). Only when it does not name an existing
-		// folder is the final component treated as the target filename (rename).
-		if stack, derr := s.resolveDir(dest); derr == nil {
+		// A bare id: target always names the destination folder; it is never a
+		// rename target, so surface a resolution failure instead of treating the
+		// token as a filename.
+		if _, ok := parseIDArg(dest); ok {
+			stack, derr := s.resolveDir(dest)
+			if derr != nil {
+				return derr
+			}
+			parent = stack
+		} else if stack, derr := s.resolveDir(dest); derr == nil {
+			// If the whole destination resolves to an existing folder, upload INTO
+			// it under the local basename (FTP-style, symmetric with get; a trailing
+			// slash resolves the same way). Only when it does not name an existing
+			// folder is the final component treated as the target filename (rename).
 			parent = stack
 		} else {
 			dir, base := splitPath(dest)
@@ -281,6 +290,10 @@ func (s *Shell) cmdPut(args []string) error {
 func (s *Shell) cmdMkdir(args []string) error {
 	if len(args) < 1 {
 		return usageErr("mkdir <name>")
+	}
+	if _, ok := parseIDArg(args[0]); ok {
+		// A bare id: target names a parent folder, not the new folder's name.
+		return fmt.Errorf("%s: an id: target names a parent folder; append /<name>", args[0])
 	}
 	dir, base := splitPath(args[0])
 	parent := s.cwd
@@ -388,6 +401,9 @@ func (s *Shell) cmdHelp(args []string) error {
 		fmt.Fprintf(s.out, "  %-22s %s\n", c.usage, c.help)
 	}
 	fmt.Fprintln(s.out, "  quit | exit | bye      end the session")
+	fmt.Fprintln(s.out, "Any remote path may be given as id:<DriveID> to target a file/folder")
+	fmt.Fprintln(s.out, "directly by its Google Drive ID, e.g. get id:1A2b3C, put f.txt id:0Bx,")
+	fmt.Fprintln(s.out, "rm id:1A2b3C, ls id:0Bx, cd id:0Bx, mkdir id:0Bx/NewFolder.")
 	return nil
 }
 

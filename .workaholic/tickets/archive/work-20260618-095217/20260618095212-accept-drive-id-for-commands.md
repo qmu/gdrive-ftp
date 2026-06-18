@@ -3,9 +3,9 @@ created_at: 2026-06-18T09:52:12+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [UX, Domain, Infrastructure]
-effort:
-commit_hash:
-category:
+effort: 1h
+commit_hash: 56dca48
+category: Changed
 depends_on:
 ---
 
@@ -132,3 +132,16 @@ Past tickets that touched similar areas:
 - **DriveID threading for Shared Drives** (`internal/shell/shell.go` `startStack`, `currentDriveID`). An ID-seeded stack frame must carry the file's `driveId` so later client calls scope to the right corpus; verify `cd id:<shared-drive-folder>` then `ls`/`put` operate within that Shared Drive. (Builds on the virtual-root / shared-drives tickets.)
 - **`mkdir`/`splitPath` interaction** (`internal/shell/shell.go`). `id:PARENT` contains a colon and no slash; ensure `splitPath` and `startStack` treat a leading `id:` segment as a stack seed rather than a literal name, so `mkdir id:PARENT/NewName` creates `NewName` under the parent (and `mkdir id:PARENT` alone is a usage error, since there is no new-folder name).
 - **Testability** (`internal/shell/shell_test.go`). Keep `parseIDArg` pure and unit-tested. The actual `GetByID` resolution path has no coverage today (no `Client` interface/mock); note this debt — introducing a client seam to test resolution is out of scope here but worth a future ticket. (`workaholic:implementation` Active Use of Unit Tests.)
+
+## Final Report
+
+Development completed as planned. The `id:` branch landed at the two existing resolution choke points (`resolveFile` for `get`/`rm`; `startStack`/`resolveDir` for `cd`/`ls`/`put`-dest/`mkdir`-parent), so all six commands inherit it through one code path, plus the single new `GetByID` client primitive. Build, `go vet`, the unit suite, and `gofmt` all pass.
+
+### Discovered Insights
+
+- **Insight**: `cmdPut`'s destination logic falls back to treating the final path component as a *rename target* when `resolveDir(dest)` fails. A bare `id:` token must never take that branch, so `cmdPut` special-cases it to surface the resolution error instead of uploading a file literally named `id:<X>`.
+  **Context**: Any future addressing scheme added to `put` must reckon with this same rename-fallback ambiguity in `internal/shell/commands.go` (cmdPut).
+- **Insight**: `parseIDArg` deliberately rejects IDs containing `/`, which is what lets a single helper serve double duty — whole-arg detection in `resolveFile`/`cmdPut`/`cmdMkdir` and first-segment detection in `startStack` — without a separate "is this a path" check. An `id:` folder can therefore anchor a longer name path (`get id:PARENT/child.txt`) because only the first segment is the ID and the remainder walks by name.
+  **Context**: `internal/shell/shell.go` — the segment-vs-path distinction is the load-bearing invariant for the whole feature.
+- **Insight**: `GetByID` must request the `driveId` field (not in the shared `fileFields` const) so an ID-seeded stack frame threads the correct Shared Drive corpus into deeper lookups; My Drive items return an empty `driveId`, matching the rest of the code's expectations.
+  **Context**: `internal/gdrive/client.go` — Shared Drive correctness depends on this field being present in the metadata fetch.

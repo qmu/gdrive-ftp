@@ -43,6 +43,15 @@ secrets.
   `"/My Drive/..."`.
 - The virtual root holds no files: `get`/`put`/`mkdir`/`rm` at `/` fail with
   "cd into a drive first" — always include a drive as the first component.
+- **Address by ID** with an `id:<DriveID>` token anywhere a remote path is
+  expected (`get id:1A2b3C`, `put f.txt id:0BxFolder`, `rm id:1A2b3C`,
+  `ls id:0BxFolder`, `cd id:0BxFolder`, `mkdir id:0BxFolder/New`). This skips name
+  navigation entirely, so it is **drive-prefix-independent** (no leading
+  `/My Drive/...` needed) and unambiguous — prefer it when you already hold a file
+  or folder ID (e.g. from a previous `created … (<id>)` line or a Drive URL), or
+  when a name is duplicated/ambiguous. An `id:` token used as a folder (`cd`/`ls`/
+  `put` target / `mkdir` parent) must point at a folder; `mkdir id:<parent>` alone
+  is rejected — append `/<name>`.
 
 ## Commands (one-shot examples)
 
@@ -72,6 +81,13 @@ gdrive-ftp mkdir "/My Drive/Work/specs"
 
 # Trash (reversible — NOT a permanent delete)
 gdrive-ftp rm "/My Drive/Work/old.pdf"
+
+# Address by Drive ID (no drive prefix needed; unambiguous)
+gdrive-ftp get id:1A2b3CdEfGh ./report.pdf       # download a file by ID
+gdrive-ftp put ./report.pdf id:0BxParentFolder   # upload INTO a folder by ID
+gdrive-ftp rm id:1A2b3CdEfGh                      # trash by ID
+gdrive-ftp ls id:0BxParentFolder                 # list a folder by ID
+gdrive-ftp mkdir id:0BxParentFolder/specs        # create under a parent by ID
 ```
 
 Success output goes to **stdout** (e.g. `downloaded …`, `uploaded …`,

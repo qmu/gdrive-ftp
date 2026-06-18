@@ -279,6 +279,29 @@ func TestSplitPath(t *testing.T) {
 	}
 }
 
+func TestParseIDArg(t *testing.T) {
+	tests := []struct {
+		in     string
+		wantID string
+		wantOK bool
+	}{
+		{"id:1A2b3C", "1A2b3C", true},
+		{"id:0Bx_-Folder", "0Bx_-Folder", true},
+		{"id:", "", false},         // empty ID after the prefix
+		{"id:a/b", "", false},      // contains a slash → it's a path, not an ID
+		{"Reports", "", false},     // a plain name
+		{"ID:1A2b3C", "", false},   // prefix is case-sensitive
+		{"xid:1A2b3C", "", false},  // prefix must be at the start
+		{"my id:thing", "", false}, // prefix must be at the start
+	}
+	for _, tt := range tests {
+		gotID, gotOK := parseIDArg(tt.in)
+		if gotID != tt.wantID || gotOK != tt.wantOK {
+			t.Errorf("parseIDArg(%q) = (%q, %v), want (%q, %v)", tt.in, gotID, gotOK, tt.wantID, tt.wantOK)
+		}
+	}
+}
+
 func TestByteCount(t *testing.T) {
 	tests := []struct {
 		n    int64

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	drive "google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -82,7 +83,7 @@ func (c *Client) List(ctx context.Context, driveID, folderID string) ([]*drive.F
 	call := c.srv.Files.List().
 		Q(q).
 		Spaces("drive").
-		Fields("nextPageToken, files("+fileFields+")").
+		Fields("nextPageToken, files(" + fileFields + ")").
 		OrderBy("folder,name_natural").
 		PageSize(1000).
 		SupportsAllDrives(true)
@@ -123,6 +124,26 @@ func (c *Client) ListDrives(ctx context.Context) ([]Ref, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// GetByID fetches a single file or folder's metadata by its Drive ID, so an
+// "id:"-prefixed argument can be resolved without name navigation. driveId is
+// populated for items inside a Shared Drive and empty for My Drive. A missing
+// ID is reported as ErrNotFound, matching the name-lookup path.
+func (c *Client) GetByID(ctx context.Context, fileID string) (*drive.File, error) {
+	f, err := c.srv.Files.Get(fileID).
+		Fields(fileFields + ",driveId").
+		SupportsAllDrives(true).
+		Context(ctx).
+		Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == 404 {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return f, nil
 }
 
 // FindChildren returns every non-trashed child of folderID whose name matches
