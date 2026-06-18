@@ -92,6 +92,8 @@ func TestArgKind(t *testing.T) {
 		{"lcd", 1, "local"},
 		{"pwd", 1, ""},
 		{"ls", 2, ""},
+		{"find", 1, ""},       // arg 1 is the search pattern, no completion
+		{"find", 2, "remote"}, // arg 2 is the start dir
 	}
 	for _, tt := range tests {
 		if got := argKind(tt.verb, tt.idx); got != tt.want {
@@ -301,6 +303,37 @@ func TestParseIDArg(t *testing.T) {
 		if gotID != tt.wantID || gotOK != tt.wantOK {
 			t.Errorf("parseIDArg(%q) = (%q, %v), want (%q, %v)", tt.in, gotID, gotOK, tt.wantID, tt.wantOK)
 		}
+	}
+}
+
+func TestNameContains(t *testing.T) {
+	tests := []struct {
+		name, pattern string
+		want          bool
+	}{
+		{"Quarterly Report.pdf", "report", true}, // case-insensitive
+		{"report-2025.txt", "REPORT", true},
+		{"budget.xlsx", "report", false},
+		{"notes", "", true}, // empty pattern matches anything
+	}
+	for _, tt := range tests {
+		if got := nameContains(tt.name, tt.pattern); got != tt.want {
+			t.Errorf("nameContains(%q,%q) = %v, want %v", tt.name, tt.pattern, got, tt.want)
+		}
+	}
+}
+
+func TestFindPathRootLevel(t *testing.T) {
+	// A file with no parents resolves to /<driveName>/<name> without any client
+	// lookups, and reports no ancestors.
+	s := &Shell{}
+	f := &drive.File{Id: "1", Name: "report.pdf"}
+	path, ancestors := s.findPath(f, "My Drive", "root", map[string]*drive.File{})
+	if path != "/My Drive/report.pdf" {
+		t.Errorf("findPath path = %q, want /My Drive/report.pdf", path)
+	}
+	if len(ancestors) != 0 {
+		t.Errorf("findPath ancestors = %v, want empty", ancestors)
 	}
 }
 

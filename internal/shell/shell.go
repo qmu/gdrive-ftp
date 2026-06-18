@@ -360,6 +360,11 @@ func argKind(verb string, argIndex int) string {
 		if argIndex == 1 {
 			return "remote"
 		}
+	case "find":
+		// arg 1 is the search pattern (no completion); arg 2 is the start dir.
+		if argIndex == 2 {
+			return "remote"
+		}
 	case "get":
 		switch argIndex {
 		case 1:

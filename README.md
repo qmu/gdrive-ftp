@@ -109,6 +109,7 @@ guard against CSRF.
 | `ls [dir]`             | List a remote directory (default: current).             |
 | `cd [dir]`             | Change remote directory. No argument (or `/`) goes to the virtual root listing all drives. |
 | `pwd`                  | Print the remote working directory.                     |
+| `find <pattern> [dir]` | Search the current drive for files/folders whose name contains `<pattern>` (case-insensitive), printing full paths. Optional `[dir]` (a path or `id:`) retargets the search; a folder anchor narrows to its subtree. |
 | `get <remote> [local]` | Download a file. Google-native docs are exported (Docs→docx, Sheets→xlsx, Slides→pptx, Drawings→png). |
 | `put <local> [remote]` | Upload a local file. If `remote` is an existing folder, the file is uploaded **into** it under its local name; otherwise `remote`'s final component is the target filename. Re-uploading the same name replaces that file's content. |
 | `mkdir <name>`         | Create a remote folder.                                 |
@@ -143,6 +144,20 @@ get   id:0BxParent/report.pdf       # an id: folder can anchor a longer path
 A bare `id:` used where a folder is required (`cd`, `ls`, `put` target, the parent
 of `mkdir`) must resolve to a folder, else the command fails with `not a directory`.
 `mkdir id:<parent>` alone is rejected — append `/<name>` for the new folder.
+
+**Search with `find`** uses Google Drive's native `name contains` query (one
+server-side call, no folder-by-folder walking), scoped to the drive you're in —
+My Drive (plus items shared with you) or the Shared Drive of your cwd. Pass a
+path or `id:` anchor to search a different drive, or a folder anchor to limit the
+results to that subtree. Matches print as full paths so you can act on one via
+its `id:` (`find` itself never modifies anything). Combine with `-json` to get an
+array of `{path,id,name,isFolder,…}` objects.
+
+```
+gdrive:/My Drive> find report
+/My Drive/Work/Quarterly Report.pdf
+/My Drive/Archive/report-2025.txt
+```
 
 **Tab completion** (like `sftp`): in the interactive shell, press **Tab** to
 complete command names, remote paths (folders and files fetched live from

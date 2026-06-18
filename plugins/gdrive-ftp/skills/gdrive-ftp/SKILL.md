@@ -76,6 +76,12 @@ gdrive-ftp get "/My Drive/notes"        # saves notes.docx
 gdrive-ftp put ./report.pdf "/My Drive/Work"
 gdrive-ftp put ./photo.jpg "/My Drive/Photos/photo.jpg"   # rename remote target
 
+# Search by name (Drive's native `name contains`, case-insensitive substring)
+gdrive-ftp find report                       # search the whole of My Drive
+gdrive-ftp find spec "/Engineering Team"     # search that Shared Drive
+gdrive-ftp find report id:0BxFolder          # narrow to a folder subtree
+# → each match prints its full path; with -json, an array of {path,id,name,...}
+
 # Make a folder
 gdrive-ftp mkdir "/My Drive/Work/specs"
 
@@ -141,6 +147,10 @@ On failure, gdrive-ftp prints `gdrive-ftp: <message>` to **stderr** and exits
 
 ## Gotchas
 
+- `find` searches by **substring** via the Drive API, scoped to one drive at a
+  time (My Drive + shared-with-you, or the Shared Drive you anchor to). It does
+  **not** search every drive at once; pass a drive/folder anchor to retarget.
+  Use it to locate an item, then act on it by `id:` from the result.
 - One-shot has no cwd → use absolute, drive-prefixed paths.
 - Names are exact + case-sensitive; duplicates are refused, not guessed.
 - `rm` trashes (recoverable from the Drive web UI), it does not hard-delete.

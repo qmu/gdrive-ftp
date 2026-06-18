@@ -17,8 +17,10 @@ import (
 
 // fileEntry is one file or folder in machine-readable form. Folders and
 // Google-native docs omit size (they have no byte length); a drive entry at the
-// virtual root sets only Name/ID/IsFolder.
+// virtual root sets only Name/ID/IsFolder. Path is set only by `find` (where a
+// match's location matters); other commands leave it empty and it is omitted.
 type fileEntry struct {
+	Path         string `json:"path,omitempty"`
 	Name         string `json:"name"`
 	ID           string `json:"id"`
 	MimeType     string `json:"mimeType,omitempty"`

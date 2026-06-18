@@ -146,6 +146,32 @@ func (c *Client) GetByID(ctx context.Context, fileID string) (*drive.File, error
 	return f, nil
 }
 
+// Search returns the non-trashed files/folders whose name matches the Drive
+// `name contains` query, scoped by driveID ("" = the user's default corpus,
+// which also includes items shared with the user; a set driveID scopes to that
+// Shared Drive). Drive's `name contains` is case-insensitive and normalization-
+// flavored, so callers re-filter for exact substring intent. Results are
+// paginated transparently. The `parents` field is included for path building.
+func (c *Client) Search(ctx context.Context, driveID, pattern string) ([]*drive.File, error) {
+	q := fmt.Sprintf("name contains '%s' and trashed = false", escapeQ(pattern))
+	var out []*drive.File
+	call := c.srv.Files.List().
+		Q(q).
+		Spaces("drive").
+		Fields("nextPageToken, files(" + fileFields + ")").
+		OrderBy("folder,name_natural").
+		PageSize(1000).
+		SupportsAllDrives(true)
+	err := withDrive(call, driveID).Pages(ctx, func(fl *drive.FileList) error {
+		out = append(out, fl.Files...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // FindChildren returns every non-trashed child of folderID whose name matches
 // exactly. driveID scopes the query to a Shared Drive ("" means My Drive).
 // Drive's "name =" query operator is case-insensitive and applies Unicode

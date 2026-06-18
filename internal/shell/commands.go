@@ -19,6 +19,7 @@ func init() {
 		"ls":    {run: (*Shell).cmdLs, usage: "ls [dir]", help: "list a remote directory (default: current)"},
 		"cd":    {run: (*Shell).cmdCd, usage: "cd [dir]", help: "change remote directory (no arg: go to root)"},
 		"pwd":   {run: (*Shell).cmdPwd, usage: "pwd", help: "print the remote working directory"},
+		"find":  {run: (*Shell).cmdFind, usage: "find <pattern> [dir]", help: "search for files/folders by name (substring)"},
 		"get":   {run: (*Shell).cmdGet, usage: "get <remote> [local]", help: "download a file (Google docs are exported)"},
 		"put":   {run: (*Shell).cmdPut, usage: "put <local> [remote]", help: "upload a local file"},
 		"mkdir": {run: (*Shell).cmdMkdir, usage: "mkdir <name>", help: "create a remote folder"},
@@ -351,6 +352,144 @@ func (s *Shell) cmdRm(args []string) error {
 	return s.emit(actionResult{Action: "trashed", Name: f.Name, ID: f.Id}, func() {
 		fmt.Fprintf(s.out, "trashed %s\n", f.Name)
 	})
+}
+
+// cmdFind searches for files/folders whose name contains <pattern> (a
+// case-insensitive substring) using Drive's native `name contains` query,
+// printing each match's full path. The search is scoped to the current drive
+// (My Drive's corpus, or the Shared Drive of the cwd); an optional [dir] anchor
+// (a path or id:) retargets it, and when the anchor is a folder the results are
+// narrowed to that folder's subtree. find never mutates and presents all
+// matches — act on one afterward via its id:.
+func (s *Shell) cmdFind(args []string) error {
+	if len(args) < 1 {
+		return usageErr("find <pattern> [dir]")
+	}
+	pattern := args[0]
+
+	// Resolve the optional anchor to a directory stack; default to the cwd.
+	stack := s.cwd
+	if len(args) >= 2 {
+		var err error
+		if stack, err = s.resolveDir(args[1]); err != nil {
+			return err
+		}
+	}
+	driveID := currentDriveID(stack)
+
+	files, err := s.c.Search(s.ctx, driveID, pattern)
+	if err != nil {
+		return err
+	}
+
+	cache := map[string]*drive.File{}
+
+	// driveName labels rendered paths; stopID is the corpus root the parent-walk
+	// halts at (the Shared Drive root == driveID, or the My Drive root folder).
+	driveName := "My Drive"
+	stopID := driveID
+	if driveID != "" {
+		if d, derr := s.findGet(driveID, cache); derr == nil {
+			driveName = d.Name
+		} else if len(stack) >= 1 {
+			driveName = stack[0].Name
+		}
+	} else if r, rerr := s.c.GetByID(s.ctx, gdrive.RootID); rerr == nil {
+		stopID = r.Id
+	}
+
+	// Narrow to a subtree only when an explicit anchor names a real subfolder
+	// (not a whole-drive root or the virtual root).
+	narrowTo := ""
+	if len(args) >= 2 {
+		if tip := currentID(stack); tip != "" && tip != gdrive.RootID && tip != driveID {
+			narrowTo = tip
+		}
+	}
+
+	entries := []fileEntry{}
+	for _, f := range files {
+		// Drive's `contains` is normalization-flavored; re-filter for a true
+		// case-insensitive substring.
+		if !nameContains(f.Name, pattern) {
+			continue
+		}
+		path, ancestors := s.findPath(f, driveName, stopID, cache)
+		if narrowTo != "" && !ancestors[narrowTo] {
+			continue
+		}
+		e := toFileEntry(f)
+		e.Path = path
+		entries = append(entries, e)
+	}
+
+	return s.emit(entries, func() {
+		for _, e := range entries {
+			line := e.Path
+			if e.IsFolder {
+				line += "/"
+			}
+			fmt.Fprintln(s.out, line)
+		}
+	})
+}
+
+// findGet is GetByID with a per-find cache to avoid re-fetching the same folder.
+func (s *Shell) findGet(id string, cache map[string]*drive.File) (*drive.File, error) {
+	if f, ok := cache[id]; ok {
+		return f, nil
+	}
+	f, err := s.c.GetByID(s.ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	cache[id] = f
+	return f, nil
+}
+
+// findPath builds f's absolute path by walking its parent chain up to the corpus
+// root (stopID), prefixed with driveName, and returns the path plus the set of
+// ancestor folder IDs (used for subtree narrowing). Unresolvable or cyclic
+// ancestry yields a best-effort path from the portion that resolved. The depth
+// cap is a backstop against pathological parent chains.
+func (s *Shell) findPath(f *drive.File, driveName, stopID string, cache map[string]*drive.File) (string, map[string]bool) {
+	names := []string{f.Name}
+	ancestors := map[string]bool{}
+	cur := f
+	for depth := 0; depth < 64; depth++ {
+		if len(cur.Parents) == 0 {
+			break
+		}
+		pid := cur.Parents[0]
+		if pid == stopID || ancestors[pid] {
+			break
+		}
+		parent, err := s.findGet(pid, cache)
+		if err != nil {
+			break // ancestry not fully resolvable; stop with a partial path
+		}
+		ancestors[pid] = true
+		// A parentless ancestor is the corpus root; driveName already covers it.
+		if len(parent.Parents) == 0 {
+			break
+		}
+		names = append([]string{parent.Name}, names...)
+		cur = parent
+	}
+	var b strings.Builder
+	b.WriteByte('/')
+	b.WriteString(driveName)
+	for _, n := range names {
+		b.WriteByte('/')
+		b.WriteString(n)
+	}
+	return b.String(), ancestors
+}
+
+// nameContains reports whether name contains pattern as a case-insensitive
+// substring — the exact semantics find promises atop Drive's looser query.
+func nameContains(name, pattern string) bool {
+	return strings.Contains(strings.ToLower(name), strings.ToLower(pattern))
 }
 
 func (s *Shell) cmdLcd(args []string) error {
