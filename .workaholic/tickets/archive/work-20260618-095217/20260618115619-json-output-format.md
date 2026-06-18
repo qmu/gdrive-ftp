@@ -3,9 +3,9 @@ created_at: 2026-06-18T11:56:19+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [UX, Domain, Infrastructure]
-effort:
-commit_hash:
-category:
+effort: 2h
+commit_hash: a49aeca
+category: Added
 depends_on:
 ---
 
@@ -147,3 +147,16 @@ Past tickets that touched similar areas:
 - **Typed cases over display strings** (`internal/shell/commands.go` `sizeStr`/`modTime`). Today `sizeStr` returns `"-"` (folder) and `"gdoc"` (Google-native) in the size column and `modTime` blank-pads on parse failure; the JSON model must use real fields (`isFolder`, omitted `size`, raw RFC3339 `modifiedTime`) rather than reusing these human artifacts. (`workaholic:implementation` Preferring Rich Typing.)
 - **Interactive vs one-shot error sites** (`internal/shell/shell.go` `Execute`/`dispatch`, `main.go` `fatal`). One-shot errors already route to stderr+exit-1 via `fatal`; interactive errors print inline. Ensure JSON-mode errors serialize at both, with `friendlyErr` still doing the rewrite.
 - **Scope boundary** (`internal/shell/commands.go`). `lls`/`lpwd`/`lcd`/`help` are interactive local-filesystem/help helpers outside the agent one-shot contract; they remain text. Only the remote-operation commands (`ls`, `get`, `put`, `mkdir`, `rm`, `pwd`) and the error path are in scope.
+
+## Final Report
+
+Development completed as planned. The renderer seam (`emit`) and owned DTOs landed in a new `internal/shell/output.go`; every remote command now builds an owned value and calls `emit`, so logic and rendering are separated and the Drive SDK type is never marshaled. Build, `go vet`, the unit suite, and `gofmt` all pass.
+
+### Discovered Insights
+
+- **Insight**: The error path splits cleanly by entry point — one-shot errors serialize in `main` (which owns `os.Exit(1)`) via the exported `shell.EncodeErrorJSON` to **stderr**, while interactive errors serialize inside `dispatch` to `s.out`. `Execute` already returns a `friendlyErr`-wrapped error, so `main` serializes that directly without re-wrapping.
+  **Context**: `main.go` one-shot block + `internal/shell/shell.go` `dispatch` — the stdout/stderr split for JSON errors mirrors the pre-existing text behavior, so the scripting contract (errors on stderr, exit 1) is preserved exactly.
+- **Insight**: `size` uses `omitempty`, so a genuine 0-byte binary file emits no `size` key (indistinguishable in JSON from a folder/gdoc on that field alone). `isFolder` and `mimeType` still disambiguate kind, so this is acceptable, but a future "always emit size for non-folders" tweak would need a pointer/`*int64` or a custom marshaler.
+  **Context**: `internal/shell/output.go` `fileEntry`/`toFileEntry` — documented trade-off for the rare 0-byte case.
+- **Insight**: No golden-text tests existed for command stdout, so the JSON contract is now the *first* output-shape coverage in the suite. Because the `Shell` takes an `io.Writer`, `emit`/`toFileEntry`/`encodeErrorJSON` are testable with a `bytes.Buffer` and no Drive client — but the command bodies themselves still aren't (no client seam), the same standing debt the `id:` and find tickets note.
+  **Context**: `internal/shell/shell_test.go` — a `gdrive.Client` interface seam remains the unlock for end-to-end command output tests.

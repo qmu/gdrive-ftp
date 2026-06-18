@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"gdrive-ftp/internal/gdrive"
 
+	drive "google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 )
 
@@ -299,6 +301,78 @@ func TestParseIDArg(t *testing.T) {
 		if gotID != tt.wantID || gotOK != tt.wantOK {
 			t.Errorf("parseIDArg(%q) = (%q, %v), want (%q, %v)", tt.in, gotID, gotOK, tt.wantID, tt.wantOK)
 		}
+	}
+}
+
+func TestToFileEntry(t *testing.T) {
+	tests := []struct {
+		name string
+		in   *drive.File
+		want fileEntry
+	}{
+		{"binary file keeps size",
+			&drive.File{Id: "1", Name: "a.bin", MimeType: "application/octet-stream", Size: 10, ModifiedTime: "2026-06-10T11:02:00Z"},
+			fileEntry{Name: "a.bin", ID: "1", MimeType: "application/octet-stream", IsFolder: false, Size: 10, ModifiedTime: "2026-06-10T11:02:00Z"}},
+		{"folder omits size",
+			&drive.File{Id: "2", Name: "Work", MimeType: gdrive.FolderMime, Size: 0},
+			fileEntry{Name: "Work", ID: "2", MimeType: gdrive.FolderMime, IsFolder: true}},
+		{"google doc omits size",
+			&drive.File{Id: "3", Name: "notes", MimeType: "application/vnd.google-apps.document", Size: 999},
+			fileEntry{Name: "notes", ID: "3", MimeType: "application/vnd.google-apps.document", IsFolder: false}},
+	}
+	for _, tt := range tests {
+		if got := toFileEntry(tt.in); got != tt.want {
+			t.Errorf("%s: toFileEntry = %+v, want %+v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestEmitJSON(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Shell{out: &buf, jsonOut: true}
+	textCalled := false
+	if err := s.emit(actionResult{Action: "trashed", Name: "old.pdf", ID: "1A2b"}, func() { textCalled = true }); err != nil {
+		t.Fatal(err)
+	}
+	if textCalled {
+		t.Error("text closure must not run in JSON mode")
+	}
+	want := `{"action":"trashed","name":"old.pdf","id":"1A2b"}` + "\n"
+	if buf.String() != want {
+		t.Errorf("emit JSON = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestEmitFileEntryArrayOmitsSize(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Shell{out: &buf, jsonOut: true}
+	entries := []fileEntry{toFileEntry(&drive.File{Id: "2", Name: "Work", MimeType: gdrive.FolderMime})}
+	if err := s.emit(entries, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"Work","id":"2","mimeType":"application/vnd.google-apps.folder","isFolder":true}]` + "\n"
+	if buf.String() != want {
+		t.Errorf("emit entries = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestEmitText(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Shell{out: &buf, jsonOut: false}
+	if err := s.emit(pwdResult{Path: "/x"}, func() { buf.WriteString("text") }); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "text" {
+		t.Errorf("text mode should run the closure, got %q", buf.String())
+	}
+}
+
+func TestEncodeErrorJSON(t *testing.T) {
+	var buf bytes.Buffer
+	encodeErrorJSON(&buf, errors.New("no such file or directory"))
+	want := `{"error":"no such file or directory"}` + "\n"
+	if buf.String() != want {
+		t.Errorf("encodeErrorJSON = %q, want %q", buf.String(), want)
 	}
 }
 

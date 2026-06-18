@@ -30,17 +30,19 @@ const myDriveName = "My Drive"
 // available drives. The first element of a non-empty cwd is always a drive
 // (My Drive or a Shared Drive) and carries its DriveID.
 type Shell struct {
-	ctx  context.Context
-	c    *gdrive.Client
-	cwd  []gdrive.Ref // path from the virtual root; empty means the virtual root
-	out  io.Writer
-	term *term.Terminal // set only while the interactive line editor is active
+	ctx     context.Context
+	c       *gdrive.Client
+	cwd     []gdrive.Ref // path from the virtual root; empty means the virtual root
+	out     io.Writer
+	jsonOut bool           // emit machine-readable JSON instead of human text
+	term    *term.Terminal // set only while the interactive line editor is active
 }
 
 // New creates a Shell positioned at the virtual root, which lists My Drive and
-// every accessible Shared Drive.
-func New(ctx context.Context, c *gdrive.Client, out io.Writer) *Shell {
-	return &Shell{ctx: ctx, c: c, out: out}
+// every accessible Shared Drive. When jsonOut is true, commands emit
+// machine-readable JSON instead of human-formatted text.
+func New(ctx context.Context, c *gdrive.Client, out io.Writer, jsonOut bool) *Shell {
+	return &Shell{ctx: ctx, c: c, out: out, jsonOut: jsonOut}
 }
 
 // command is a single REPL verb.
@@ -517,7 +519,11 @@ func (s *Shell) dispatch(args []string) (quit bool) {
 		return false
 	}
 	if err := cmd.run(s, rest); err != nil {
-		fmt.Fprintf(s.out, "%s: %v\n", name, friendlyErr(err))
+		if s.jsonOut {
+			encodeErrorJSON(s.out, friendlyErr(err))
+		} else {
+			fmt.Fprintf(s.out, "%s: %v\n", name, friendlyErr(err))
+		}
 	}
 	return false
 }

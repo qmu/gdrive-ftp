@@ -88,6 +88,7 @@ gdrive-ftp put ./photo.jpg /Photos/photo.jpg
 |-----------|----------------------------------------|----------------------------------------------------|
 | `-creds`  | `./credentials.json` or config dir     | OAuth client `credentials.json`                    |
 | `-token`  | `~/.config/gdrive-ftp/token.json`      | Where to cache the auth token                      |
+| `-json`   | `false`                                | Emit machine-readable JSON instead of text         |
 
 ### Authorizing
 
@@ -162,6 +163,34 @@ Drive paths (and `gdrive-ftp put ./file <Tab>` completes the remote target).
 It uses your cached token and stays silent if you haven't authorized yet
 (run `gdrive-ftp auth` first). Each Tab makes a live Drive call, so expect a
 brief pause on large folders.
+
+## JSON output
+
+Pass the global `-json` flag to switch every command from human-formatted text to
+compact, machine-readable JSON — handy for scripts and AI agents. The contract:
+
+- **Results go to stdout** as a single JSON value: `ls` emits an **array** of file
+  objects; `get`/`put`/`mkdir`/`rm` emit a single result **object**; `pwd` emits
+  `{"path":"…"}`. Output is one line, newline-terminated.
+- **Errors go to stderr** as `{"error":"…"}` and the process still exits non-zero.
+- Keys use stable, domain names: `name`, `id`, `mimeType`, `isFolder`, `size`
+  (omitted for folders and Google-native docs), `modifiedTime` (RFC 3339). Action
+  objects carry `action` (`downloaded`/`exported`/`uploaded`/`created`/`trashed`),
+  plus `dest`/`size`/`id` as relevant.
+
+```sh
+$ gdrive-ftp -json ls "/My Drive/Work"
+[{"name":"report.pdf","id":"1A2b","mimeType":"application/pdf","isFolder":false,"size":840000,"modifiedTime":"2026-06-10T11:02:00Z"}]
+
+$ gdrive-ftp -json put ./report.pdf id:0BxParentFolder
+{"action":"uploaded","name":"report.pdf","id":"1A2b","size":840000}
+
+$ gdrive-ftp -json get /nope
+{"error":"no such file or directory"}      # → stderr, exit 1
+```
+
+The local-only interactive helpers (`lls`/`lpwd`/`lcd`) and `help` are unaffected
+by `-json`; so is Tab/zsh completion.
 
 ## Notes & limitations
 

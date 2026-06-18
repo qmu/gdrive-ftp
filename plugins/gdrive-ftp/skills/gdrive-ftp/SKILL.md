@@ -98,7 +98,31 @@ Success output goes to **stdout** (e.g. `downloaded …`, `uploaded …`,
 the interactive shell — ignore them in one-shot use.
 
 Flags: `-creds <path>` and `-token <path>` override the credential/token
-locations (defaults under `~/.config/gdrive-ftp/`).
+locations (defaults under `~/.config/gdrive-ftp/`). `-json` switches output to
+machine-readable JSON (see below).
+
+## JSON output (`-json`) — prefer this as an agent
+
+Pass the global `-json` flag to get parseable output instead of scraping text:
+
+```sh
+gdrive-ftp -json ls "/My Drive/Work"
+# → stdout: [{"name":"report.pdf","id":"1A2b","mimeType":"application/pdf","isFolder":false,"size":840000,"modifiedTime":"2026-06-10T11:02:00Z"}]
+
+gdrive-ftp -json put ./report.pdf id:0BxParent
+# → stdout: {"action":"uploaded","name":"report.pdf","id":"1A2b","size":840000}
+
+gdrive-ftp -json get /nope
+# → stderr: {"error":"no such file or directory"} , exit 1
+```
+
+Contract: **results on stdout** (an array for `ls`; a single object for
+`get`/`put`/`mkdir`/`rm`; `{"path":…}` for `pwd`), **errors on stderr** as
+`{"error":…}` with a **non-zero exit**. Stable keys: `name`, `id`, `mimeType`,
+`isFolder`, `size` (omitted for folders/Google-native docs), `modifiedTime`
+(RFC 3339); action objects carry `action`
+(`downloaded`/`exported`/`uploaded`/`created`/`trashed`) plus `dest`/`size`/`id`.
+Capture an `id` from a result and reuse it as `id:<id>` in a follow-up command.
 
 ## Error / exit contract (for scripting)
 

@@ -50,8 +50,9 @@ func (s *Shell) cmdLs(args []string) error {
 				return err
 			}
 			if !gdrive.IsFolder(f) {
-				fmt.Fprintf(s.out, "%12s  %s  %s\n", sizeStr(f), modTime(f.ModifiedTime), f.Name)
-				return nil
+				return s.emit([]fileEntry{toFileEntry(f)}, func() {
+					fmt.Fprintf(s.out, "%12s  %s  %s\n", sizeStr(f), modTime(f.ModifiedTime), f.Name)
+				})
 			}
 			// Re-resolve as a directory so the drive context (DriveID) is
 			// threaded into the listing below.
@@ -68,14 +69,19 @@ func (s *Shell) cmdLs(args []string) error {
 	if err != nil {
 		return err
 	}
+	entries := make([]fileEntry, 0, len(files))
 	for _, f := range files {
-		name := f.Name
-		if gdrive.IsFolder(f) {
-			name += "/"
-		}
-		fmt.Fprintf(s.out, "%12s  %s  %s\n", sizeStr(f), modTime(f.ModifiedTime), name)
+		entries = append(entries, toFileEntry(f))
 	}
-	return nil
+	return s.emit(entries, func() {
+		for _, f := range files {
+			name := f.Name
+			if gdrive.IsFolder(f) {
+				name += "/"
+			}
+			fmt.Fprintf(s.out, "%12s  %s  %s\n", sizeStr(f), modTime(f.ModifiedTime), name)
+		}
+	})
 }
 
 // listDrives prints the virtual-root entries (My Drive plus each Shared Drive)
@@ -85,10 +91,15 @@ func (s *Shell) listDrives() error {
 	if err != nil {
 		return err
 	}
+	entries := make([]fileEntry, 0, len(drives))
 	for _, d := range drives {
-		fmt.Fprintf(s.out, "%12s  %s  %s\n", "-", modTime(""), d.Name+"/")
+		entries = append(entries, fileEntry{Name: d.Name, ID: d.ID, IsFolder: true})
 	}
-	return nil
+	return s.emit(entries, func() {
+		for _, d := range drives {
+			fmt.Fprintf(s.out, "%12s  %s  %s\n", "-", modTime(""), d.Name+"/")
+		}
+	})
 }
 
 // singleDriveArg reports whether arg selects a single top-level drive (a
@@ -119,8 +130,9 @@ func (s *Shell) cmdCd(args []string) error {
 }
 
 func (s *Shell) cmdPwd(args []string) error {
-	fmt.Fprintln(s.out, s.pwd())
-	return nil
+	return s.emit(pwdResult{Path: s.pwd()}, func() {
+		fmt.Fprintln(s.out, s.pwd())
+	})
 }
 
 func (s *Shell) cmdGet(args []string) error {
@@ -168,12 +180,18 @@ func (s *Shell) cmdGet(args []string) error {
 	if err != nil {
 		return err
 	}
+	res := actionResult{Action: "downloaded", Name: f.Name, Dest: dest, Size: n}
 	if exported {
-		fmt.Fprintf(s.out, "exported %s -> %s (%s, %s)\n", f.Name, dest, shortType(f.MimeType), byteCount(n))
-	} else {
-		fmt.Fprintf(s.out, "downloaded %s -> %s (%s)\n", f.Name, dest, byteCount(n))
+		res.Action = "exported"
+		res.MimeType = f.MimeType
 	}
-	return nil
+	return s.emit(res, func() {
+		if exported {
+			fmt.Fprintf(s.out, "exported %s -> %s (%s, %s)\n", f.Name, dest, shortType(f.MimeType), byteCount(n))
+		} else {
+			fmt.Fprintf(s.out, "downloaded %s -> %s (%s)\n", f.Name, dest, byteCount(n))
+		}
+	})
 }
 
 // resolveLocalDest decides the local path for a download. An empty local writes
@@ -283,8 +301,9 @@ func (s *Shell) cmdPut(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(s.out, "uploaded %s -> %s (%s)\n", local, name, byteCount(f.Size))
-	return nil
+	return s.emit(actionResult{Action: "uploaded", Name: name, ID: f.Id, Size: f.Size}, func() {
+		fmt.Fprintf(s.out, "uploaded %s -> %s (%s)\n", local, name, byteCount(f.Size))
+	})
 }
 
 func (s *Shell) cmdMkdir(args []string) error {
@@ -313,8 +332,9 @@ func (s *Shell) cmdMkdir(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(s.out, "created %s/ (%s)\n", f.Name, f.Id)
-	return nil
+	return s.emit(actionResult{Action: "created", Name: f.Name, ID: f.Id}, func() {
+		fmt.Fprintf(s.out, "created %s/ (%s)\n", f.Name, f.Id)
+	})
 }
 
 func (s *Shell) cmdRm(args []string) error {
@@ -328,8 +348,9 @@ func (s *Shell) cmdRm(args []string) error {
 	if err := s.c.Trash(s.ctx, f.Id); err != nil {
 		return err
 	}
-	fmt.Fprintf(s.out, "trashed %s\n", f.Name)
-	return nil
+	return s.emit(actionResult{Action: "trashed", Name: f.Name, ID: f.Id}, func() {
+		fmt.Fprintf(s.out, "trashed %s\n", f.Name)
+	})
 }
 
 func (s *Shell) cmdLcd(args []string) error {
