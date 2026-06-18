@@ -5,9 +5,9 @@ origin_branch: work-20260616-211843
 origin_commit: 812bffc
 created_at: 2026-06-17T00:06:42+09:00
 severity: low
-status: active
-resolved_by_pr:
-resolved_by_commit:
+status: resolved
+resolved_by_pr: 3
+resolved_by_commit: 372cfe5
 ---
 
 # Wedged paths from the old bug still need out-of-band cleanup

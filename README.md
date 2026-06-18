@@ -88,6 +88,7 @@ gdrive-ftp put ./photo.jpg /Photos/photo.jpg
 |-----------|----------------------------------------|----------------------------------------------------|
 | `-creds`  | `./credentials.json` or config dir     | OAuth client `credentials.json`                    |
 | `-token`  | `~/.config/gdrive-ftp/token.json`      | Where to cache the auth token                      |
+| `-json`   | `false`                                | Emit machine-readable JSON instead of text         |
 
 ### Authorizing
 
@@ -108,6 +109,7 @@ guard against CSRF.
 | `ls [dir]`             | List a remote directory (default: current).             |
 | `cd [dir]`             | Change remote directory. No argument (or `/`) goes to the virtual root listing all drives. |
 | `pwd`                  | Print the remote working directory.                     |
+| `find <pattern> [dir]` | Search the current drive for files/folders whose name contains `<pattern>` (case-insensitive), printing full paths. Optional `[dir]` (a path or `id:`) retargets the search; a folder anchor narrows to its subtree. |
 | `get <remote> [local]` | Download a file. Google-native docs are exported (Docs→docx, Sheets→xlsx, Slides→pptx, Drawings→png). |
 | `put <local> [remote]` | Upload a local file. If `remote` is an existing folder, the file is uploaded **into** it under its local name; otherwise `remote`'s final component is the target filename. Re-uploading the same name replaces that file's content. |
 | `mkdir <name>`         | Create a remote folder.                                 |
@@ -122,6 +124,40 @@ Paths may be absolute (`/My Drive/Work/docs`) or relative (`../Photos`), and
 `.`/`..` work as expected; the first path component selects a drive (`My Drive`
 or a Shared Drive). Names containing spaces can be quoted: `cd "My Drive"`,
 `get "my file.pdf"`.
+
+**Addressing by Drive ID.** Anywhere a remote path is expected, an `id:<DriveID>`
+token targets a file or folder **directly by its Google Drive ID**, skipping name
+navigation. It is opt-in and unambiguous, so it never collides with a filename
+and needs no flag or mode — handy for scripts, and the only way to act on an item
+whose name is ambiguous or otherwise unreachable by path:
+
+```
+get   id:1A2b3CdEfGh ./report.pdf   # download a file by ID
+put   ./report.pdf id:0BxParent     # upload INTO a folder by ID
+rm    id:1A2b3CdEfGh                # trash a file/folder by ID
+ls    id:0BxParent                  # list a folder by ID
+cd    id:0BxParent                  # cd into a folder by ID
+mkdir id:0BxParent/NewFolder        # create under a parent folder by ID
+get   id:0BxParent/report.pdf       # an id: folder can anchor a longer path
+```
+
+A bare `id:` used where a folder is required (`cd`, `ls`, `put` target, the parent
+of `mkdir`) must resolve to a folder, else the command fails with `not a directory`.
+`mkdir id:<parent>` alone is rejected — append `/<name>` for the new folder.
+
+**Search with `find`** uses Google Drive's native `name contains` query (one
+server-side call, no folder-by-folder walking), scoped to the drive you're in —
+My Drive (plus items shared with you) or the Shared Drive of your cwd. Pass a
+path or `id:` anchor to search a different drive, or a folder anchor to limit the
+results to that subtree. Matches print as full paths so you can act on one via
+its `id:` (`find` itself never modifies anything). Combine with `-json` to get an
+array of `{path,id,name,isFolder,…}` objects.
+
+```
+gdrive:/My Drive> find report
+/My Drive/Work/Quarterly Report.pdf
+/My Drive/Archive/report-2025.txt
+```
 
 **Tab completion** (like `sftp`): in the interactive shell, press **Tab** to
 complete command names, remote paths (folders and files fetched live from
@@ -142,6 +178,34 @@ Drive paths (and `gdrive-ftp put ./file <Tab>` completes the remote target).
 It uses your cached token and stays silent if you haven't authorized yet
 (run `gdrive-ftp auth` first). Each Tab makes a live Drive call, so expect a
 brief pause on large folders.
+
+## JSON output
+
+Pass the global `-json` flag to switch every command from human-formatted text to
+compact, machine-readable JSON — handy for scripts and AI agents. The contract:
+
+- **Results go to stdout** as a single JSON value: `ls` emits an **array** of file
+  objects; `get`/`put`/`mkdir`/`rm` emit a single result **object**; `pwd` emits
+  `{"path":"…"}`. Output is one line, newline-terminated.
+- **Errors go to stderr** as `{"error":"…"}` and the process still exits non-zero.
+- Keys use stable, domain names: `name`, `id`, `mimeType`, `isFolder`, `size`
+  (omitted for folders and Google-native docs), `modifiedTime` (RFC 3339). Action
+  objects carry `action` (`downloaded`/`exported`/`uploaded`/`created`/`trashed`),
+  plus `dest`/`size`/`id` as relevant.
+
+```sh
+$ gdrive-ftp -json ls "/My Drive/Work"
+[{"name":"report.pdf","id":"1A2b","mimeType":"application/pdf","isFolder":false,"size":840000,"modifiedTime":"2026-06-10T11:02:00Z"}]
+
+$ gdrive-ftp -json put ./report.pdf id:0BxParentFolder
+{"action":"uploaded","name":"report.pdf","id":"1A2b","size":840000}
+
+$ gdrive-ftp -json get /nope
+{"error":"no such file or directory"}      # → stderr, exit 1
+```
+
+The local-only interactive helpers (`lls`/`lpwd`/`lcd`) and `help` are unaffected
+by `-json`; so is Tab/zsh completion.
 
 ## Notes & limitations
 

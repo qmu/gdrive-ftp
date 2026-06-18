@@ -15,9 +15,9 @@ import (
 
 	"gdrive-ftp/internal/gdrive"
 
+	"golang.org/x/term"
 	drive "google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
-	"golang.org/x/term"
 )
 
 // myDriveName is the label of the synthetic My Drive entry shown at the virtual
@@ -30,17 +30,19 @@ const myDriveName = "My Drive"
 // available drives. The first element of a non-empty cwd is always a drive
 // (My Drive or a Shared Drive) and carries its DriveID.
 type Shell struct {
-	ctx  context.Context
-	c    *gdrive.Client
-	cwd  []gdrive.Ref // path from the virtual root; empty means the virtual root
-	out  io.Writer
-	term *term.Terminal // set only while the interactive line editor is active
+	ctx     context.Context
+	c       *gdrive.Client
+	cwd     []gdrive.Ref // path from the virtual root; empty means the virtual root
+	out     io.Writer
+	jsonOut bool           // emit machine-readable JSON instead of human text
+	term    *term.Terminal // set only while the interactive line editor is active
 }
 
 // New creates a Shell positioned at the virtual root, which lists My Drive and
-// every accessible Shared Drive.
-func New(ctx context.Context, c *gdrive.Client, out io.Writer) *Shell {
-	return &Shell{ctx: ctx, c: c, out: out}
+// every accessible Shared Drive. When jsonOut is true, commands emit
+// machine-readable JSON instead of human-formatted text.
+func New(ctx context.Context, c *gdrive.Client, out io.Writer, jsonOut bool) *Shell {
+	return &Shell{ctx: ctx, c: c, out: out, jsonOut: jsonOut}
 }
 
 // command is a single REPL verb.
@@ -358,6 +360,11 @@ func argKind(verb string, argIndex int) string {
 		if argIndex == 1 {
 			return "remote"
 		}
+	case "find":
+		// arg 1 is the search pattern (no completion); arg 2 is the start dir.
+		if argIndex == 2 {
+			return "remote"
+		}
 	case "get":
 		switch argIndex {
 		case 1:
@@ -517,7 +524,11 @@ func (s *Shell) dispatch(args []string) (quit bool) {
 		return false
 	}
 	if err := cmd.run(s, rest); err != nil {
-		fmt.Fprintf(s.out, "%s: %v\n", name, friendlyErr(err))
+		if s.jsonOut {
+			encodeErrorJSON(s.out, friendlyErr(err))
+		} else {
+			fmt.Fprintf(s.out, "%s: %v\n", name, friendlyErr(err))
+		}
 	}
 	return false
 }
@@ -598,7 +609,10 @@ func (s *Shell) findDrive(name string) (gdrive.Ref, error) {
 // resolveDir resolves a path (absolute or relative, with . and .. segments) to
 // a directory stack. It errors if any segment is missing or not a folder.
 func (s *Shell) resolveDir(path string) ([]gdrive.Ref, error) {
-	stack, segs := s.startStack(path)
+	stack, segs, err := s.startStack(path)
+	if err != nil {
+		return nil, err
+	}
 	for _, seg := range segs {
 		switch seg {
 		case "", ".":
@@ -627,10 +641,34 @@ func (s *Shell) resolveDir(path string) ([]gdrive.Ref, error) {
 	return stack, nil
 }
 
-// resolveFile resolves a path to a single file or folder. The leading
-// directory components must exist; the final component is looked up and
+// idPrefix marks a path segment as a raw Drive ID rather than a name to look
+// up, e.g. "id:1A2b3C". It is an opt-in, unambiguous addressing form that never
+// collides with a filename and introduces no command mode.
+const idPrefix = "id:"
+
+// parseIDArg reports whether seg is an "id:<ID>" reference and returns the bare
+// ID. It matches only a single segment: an empty ID, or one containing "/" (so
+// the token is really a path), is not treated as an ID. The prefix is literal
+// and case-sensitive.
+func parseIDArg(seg string) (id string, ok bool) {
+	if !strings.HasPrefix(seg, idPrefix) {
+		return "", false
+	}
+	id = seg[len(idPrefix):]
+	if id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
+// resolveFile resolves a path to a single file or folder. A bare "id:<ID>"
+// argument is resolved directly by ID, bypassing name navigation. Otherwise the
+// leading directory components must exist; the final component is looked up and
 // returned.
 func (s *Shell) resolveFile(path string) (*drive.File, error) {
+	if id, ok := parseIDArg(path); ok {
+		return s.c.GetByID(s.ctx, id)
+	}
 	dir, base := splitPath(path)
 	switch base {
 	case "":
@@ -658,15 +696,33 @@ func (s *Shell) resolveFile(path string) (*drive.File, error) {
 	return f, nil
 }
 
-// startStack returns the initial stack (root for absolute paths, a copy of the
-// cwd otherwise) and the path split into segments.
-func (s *Shell) startStack(path string) ([]gdrive.Ref, []string) {
+// startStack returns the initial directory stack and the path split into
+// segments to walk. A leading "id:<ID>" segment seeds the stack from that Drive
+// folder — an absolute, name-independent anchor that must resolve to a folder.
+// Otherwise an absolute path starts at the virtual root and a relative path
+// starts at a copy of the cwd.
+func (s *Shell) startStack(path string) ([]gdrive.Ref, []string, error) {
+	segs := strings.Split(path, "/")
+	if id, ok := parseIDArg(segs[0]); ok {
+		f, err := s.c.GetByID(s.ctx, id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", segs[0], err)
+		}
+		if !gdrive.IsFolder(f) {
+			return nil, nil, fmt.Errorf("%s: not a directory", segs[0])
+		}
+		// A Shared Drive item carries its DriveID so deeper lookups stay in the
+		// right corpus; a My Drive item has an empty DriveID, as the rest of the
+		// code expects.
+		seed := gdrive.Ref{ID: f.Id, Name: f.Name, DriveID: f.DriveId}
+		return []gdrive.Ref{seed}, segs[1:], nil
+	}
 	if strings.HasPrefix(path, "/") {
-		return nil, strings.Split(path, "/")
+		return nil, segs, nil
 	}
 	stack := make([]gdrive.Ref, len(s.cwd))
 	copy(stack, s.cwd)
-	return stack, strings.Split(path, "/")
+	return stack, segs, nil
 }
 
 // splitPath splits a remote path into its directory part and final element,

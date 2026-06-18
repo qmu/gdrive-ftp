@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	drive "google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -82,7 +83,7 @@ func (c *Client) List(ctx context.Context, driveID, folderID string) ([]*drive.F
 	call := c.srv.Files.List().
 		Q(q).
 		Spaces("drive").
-		Fields("nextPageToken, files("+fileFields+")").
+		Fields("nextPageToken, files(" + fileFields + ")").
 		OrderBy("folder,name_natural").
 		PageSize(1000).
 		SupportsAllDrives(true)
@@ -119,6 +120,52 @@ func (c *Client) ListDrives(ctx context.Context) ([]Ref, error) {
 			}
 			return nil
 		})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetByID fetches a single file or folder's metadata by its Drive ID, so an
+// "id:"-prefixed argument can be resolved without name navigation. driveId is
+// populated for items inside a Shared Drive and empty for My Drive. A missing
+// ID is reported as ErrNotFound, matching the name-lookup path.
+func (c *Client) GetByID(ctx context.Context, fileID string) (*drive.File, error) {
+	f, err := c.srv.Files.Get(fileID).
+		Fields(fileFields + ",driveId").
+		SupportsAllDrives(true).
+		Context(ctx).
+		Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && ge.Code == 404 {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// Search returns the non-trashed files/folders whose name matches the Drive
+// `name contains` query, scoped by driveID ("" = the user's default corpus,
+// which also includes items shared with the user; a set driveID scopes to that
+// Shared Drive). Drive's `name contains` is case-insensitive and normalization-
+// flavored, so callers re-filter for exact substring intent. Results are
+// paginated transparently. The `parents` field is included for path building.
+func (c *Client) Search(ctx context.Context, driveID, pattern string) ([]*drive.File, error) {
+	q := fmt.Sprintf("name contains '%s' and trashed = false", escapeQ(pattern))
+	var out []*drive.File
+	call := c.srv.Files.List().
+		Q(q).
+		Spaces("drive").
+		Fields("nextPageToken, files(" + fileFields + ")").
+		OrderBy("folder,name_natural").
+		PageSize(1000).
+		SupportsAllDrives(true)
+	err := withDrive(call, driveID).Pages(ctx, func(fl *drive.FileList) error {
+		out = append(out, fl.Files...)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}

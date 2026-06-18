@@ -28,6 +28,7 @@ import (
 func main() {
 	creds := flag.String("creds", defaultCredsPath(), "path to OAuth client credentials.json")
 	token := flag.String("token", defaultTokenPath(), "path to the cached auth token")
+	jsonOut := flag.Bool("json", false, "emit machine-readable JSON output")
 	flag.Usage = usage
 	flag.Parse()
 	args := flag.Args()
@@ -69,11 +70,16 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	sh := shell.New(ctx, client, os.Stdout)
+	sh := shell.New(ctx, client, os.Stdout, *jsonOut)
 
 	// One-shot mode: any positional args form a single command.
 	if args := flag.Args(); len(args) > 0 {
 		if err := sh.Execute(args); err != nil {
+			if *jsonOut {
+				// JSON mode: error envelope on stderr, still exit non-zero.
+				shell.EncodeErrorJSON(os.Stderr, err)
+				os.Exit(1)
+			}
 			fatal(err)
 		}
 		return
@@ -101,7 +107,7 @@ func completeForShell(ctx context.Context, creds, token string, words []string) 
 	if err != nil {
 		return
 	}
-	sh := shell.New(ctx, client, os.Stdout)
+	sh := shell.New(ctx, client, os.Stdout, false) // completion output is never JSON
 	for _, c := range sh.Complete(words) {
 		fmt.Println(c)
 	}

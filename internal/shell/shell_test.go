@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"gdrive-ftp/internal/gdrive"
 
+	drive "google.golang.org/api/drive/v3"
 	"google.golang.org/api/googleapi"
 )
 
@@ -90,6 +92,8 @@ func TestArgKind(t *testing.T) {
 		{"lcd", 1, "local"},
 		{"pwd", 1, ""},
 		{"ls", 2, ""},
+		{"find", 1, ""},       // arg 1 is the search pattern, no completion
+		{"find", 2, "remote"}, // arg 2 is the start dir
 	}
 	for _, tt := range tests {
 		if got := argKind(tt.verb, tt.idx); got != tt.want {
@@ -276,6 +280,132 @@ func TestSplitPath(t *testing.T) {
 		if dir != tt.dir || base != tt.base {
 			t.Errorf("splitPath(%q) = (%q, %q), want (%q, %q)", tt.in, dir, base, tt.dir, tt.base)
 		}
+	}
+}
+
+func TestParseIDArg(t *testing.T) {
+	tests := []struct {
+		in     string
+		wantID string
+		wantOK bool
+	}{
+		{"id:1A2b3C", "1A2b3C", true},
+		{"id:0Bx_-Folder", "0Bx_-Folder", true},
+		{"id:", "", false},         // empty ID after the prefix
+		{"id:a/b", "", false},      // contains a slash → it's a path, not an ID
+		{"Reports", "", false},     // a plain name
+		{"ID:1A2b3C", "", false},   // prefix is case-sensitive
+		{"xid:1A2b3C", "", false},  // prefix must be at the start
+		{"my id:thing", "", false}, // prefix must be at the start
+	}
+	for _, tt := range tests {
+		gotID, gotOK := parseIDArg(tt.in)
+		if gotID != tt.wantID || gotOK != tt.wantOK {
+			t.Errorf("parseIDArg(%q) = (%q, %v), want (%q, %v)", tt.in, gotID, gotOK, tt.wantID, tt.wantOK)
+		}
+	}
+}
+
+func TestNameContains(t *testing.T) {
+	tests := []struct {
+		name, pattern string
+		want          bool
+	}{
+		{"Quarterly Report.pdf", "report", true}, // case-insensitive
+		{"report-2025.txt", "REPORT", true},
+		{"budget.xlsx", "report", false},
+		{"notes", "", true}, // empty pattern matches anything
+	}
+	for _, tt := range tests {
+		if got := nameContains(tt.name, tt.pattern); got != tt.want {
+			t.Errorf("nameContains(%q,%q) = %v, want %v", tt.name, tt.pattern, got, tt.want)
+		}
+	}
+}
+
+func TestFindPathRootLevel(t *testing.T) {
+	// A file with no parents resolves to /<driveName>/<name> without any client
+	// lookups, and reports no ancestors.
+	s := &Shell{}
+	f := &drive.File{Id: "1", Name: "report.pdf"}
+	path, ancestors := s.findPath(f, "My Drive", "root", map[string]*drive.File{})
+	if path != "/My Drive/report.pdf" {
+		t.Errorf("findPath path = %q, want /My Drive/report.pdf", path)
+	}
+	if len(ancestors) != 0 {
+		t.Errorf("findPath ancestors = %v, want empty", ancestors)
+	}
+}
+
+func TestToFileEntry(t *testing.T) {
+	tests := []struct {
+		name string
+		in   *drive.File
+		want fileEntry
+	}{
+		{"binary file keeps size",
+			&drive.File{Id: "1", Name: "a.bin", MimeType: "application/octet-stream", Size: 10, ModifiedTime: "2026-06-10T11:02:00Z"},
+			fileEntry{Name: "a.bin", ID: "1", MimeType: "application/octet-stream", IsFolder: false, Size: 10, ModifiedTime: "2026-06-10T11:02:00Z"}},
+		{"folder omits size",
+			&drive.File{Id: "2", Name: "Work", MimeType: gdrive.FolderMime, Size: 0},
+			fileEntry{Name: "Work", ID: "2", MimeType: gdrive.FolderMime, IsFolder: true}},
+		{"google doc omits size",
+			&drive.File{Id: "3", Name: "notes", MimeType: "application/vnd.google-apps.document", Size: 999},
+			fileEntry{Name: "notes", ID: "3", MimeType: "application/vnd.google-apps.document", IsFolder: false}},
+	}
+	for _, tt := range tests {
+		if got := toFileEntry(tt.in); got != tt.want {
+			t.Errorf("%s: toFileEntry = %+v, want %+v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestEmitJSON(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Shell{out: &buf, jsonOut: true}
+	textCalled := false
+	if err := s.emit(actionResult{Action: "trashed", Name: "old.pdf", ID: "1A2b"}, func() { textCalled = true }); err != nil {
+		t.Fatal(err)
+	}
+	if textCalled {
+		t.Error("text closure must not run in JSON mode")
+	}
+	want := `{"action":"trashed","name":"old.pdf","id":"1A2b"}` + "\n"
+	if buf.String() != want {
+		t.Errorf("emit JSON = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestEmitFileEntryArrayOmitsSize(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Shell{out: &buf, jsonOut: true}
+	entries := []fileEntry{toFileEntry(&drive.File{Id: "2", Name: "Work", MimeType: gdrive.FolderMime})}
+	if err := s.emit(entries, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"Work","id":"2","mimeType":"application/vnd.google-apps.folder","isFolder":true}]` + "\n"
+	if buf.String() != want {
+		t.Errorf("emit entries = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestEmitText(t *testing.T) {
+	var buf bytes.Buffer
+	s := &Shell{out: &buf, jsonOut: false}
+	if err := s.emit(pwdResult{Path: "/x"}, func() { buf.WriteString("text") }); err != nil {
+		t.Fatal(err)
+	}
+	if buf.String() != "text" {
+		t.Errorf("text mode should run the closure, got %q", buf.String())
+	}
+}
+
+func TestEncodeErrorJSON(t *testing.T) {
+	var buf bytes.Buffer
+	encodeErrorJSON(&buf, errors.New("no such file or directory"))
+	want := `{"error":"no such file or directory"}` + "\n"
+	if buf.String() != want {
+		t.Errorf("encodeErrorJSON = %q, want %q", buf.String(), want)
 	}
 }
 
