@@ -24,6 +24,8 @@ import (
 	"gdrive-ftp/internal/auth"
 	"gdrive-ftp/internal/gdrive"
 	"gdrive-ftp/internal/shell"
+
+	"golang.org/x/term"
 )
 
 func main() {
@@ -42,6 +44,13 @@ func main() {
 			return
 		}
 		fatal(fmt.Errorf("usage: %s completion zsh", filepath.Base(os.Args[0])))
+	}
+
+	// "log" opens the read-only audit-log browser. Like completion, it reads only
+	// the local log file and needs no Drive auth, so it branches before auth.Client.
+	if len(args) >= 1 && args[0] == "log" {
+		runLog(*jsonOut)
+		return
 	}
 
 	// Cancel in-flight Drive calls cleanly on Ctrl-C.
@@ -97,6 +106,30 @@ func main() {
 	}
 }
 
+// runLog reads the audit log and presents it: as a JSON array under -json, as
+// plain rows when stdout is not a terminal (the agent/pipe path), and otherwise
+// as the interactive tig-like browser. It reads the local log only — no auth.
+func runLog(jsonOut bool) {
+	entries, err := audit.Read(defaultLogPath())
+	if err != nil {
+		fatal(err)
+	}
+	switch {
+	case jsonOut:
+		if err := audit.WriteJSON(os.Stdout, entries); err != nil {
+			fatal(err)
+		}
+	case !term.IsTerminal(int(os.Stdout.Fd())):
+		audit.WriteText(os.Stdout, entries)
+	case len(entries) == 0:
+		fmt.Println("No Drive operations have been logged yet.")
+	default:
+		if err := audit.Browse(entries); err != nil {
+			fatal(err)
+		}
+	}
+}
+
 // completeForShell prints shell-completion candidates (one per line) for the
 // given command words. It is invoked by the zsh completion script on Tab and
 // must stay silent on any error so a Tab press never spews output.
@@ -140,6 +173,7 @@ func usage() {
 	flag.PrintDefaults()
 	fmt.Fprintln(os.Stderr, "\nWith no command, an interactive FTP-like shell is started.")
 	fmt.Fprintln(os.Stderr, "Use 'auth' to run the OAuth consent flow and exit.")
+	fmt.Fprintln(os.Stderr, "Use 'log' to browse the audit log of Drive changes (j/k to move, q to quit).")
 	fmt.Fprintln(os.Stderr, "Use 'completion zsh' to print a zsh completion script (see README).")
 }
 

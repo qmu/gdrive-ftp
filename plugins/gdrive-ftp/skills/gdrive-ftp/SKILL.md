@@ -150,6 +150,12 @@ grep '"op":"trash"' ~/.config/gdrive-ftp/audit.jsonl | jq -r '.id'
 Recover using the logged `id` (e.g. re-`get` by `id:<id>`; a trashed file can be
 restored from the Drive web UI). Pass `-no-log` to disable logging for a command.
 
+There is also a `gdrive-ftp log` subcommand. In a terminal it opens an
+interactive `j`/`k` browser (for humans); when piped or run with `-json` it prints
+the entries to stdout — **prefer `gdrive-ftp -json log`** to read the history as an
+array of entry objects without parsing the file yourself. It is read-only and
+needs no auth.
+
 ## Error / exit contract (for scripting)
 
 On failure, gdrive-ftp prints `gdrive-ftp: <message>` to **stderr** and exits

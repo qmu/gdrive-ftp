@@ -3,9 +3,9 @@ created_at: 2026-06-18T17:22:16+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [UX, Domain]
-effort:
-commit_hash:
-category:
+effort: 2h
+commit_hash: 9270d1c
+category: Added
 depends_on: [20260618172215-audit-log-mutations.md]
 ---
 
@@ -76,3 +76,16 @@ Past tickets that touched similar areas:
 - **Self-explanatory, all states designed** (`internal/audit/browser.go`). Loading is instant (local file), but the **empty** state must explain itself ("no operations logged yet"), and a corrupt/partial line must not crash the viewer — skip it. Labels use the CLI's own action vocabulary (`uploaded`/`trashed`/`created`), not internal enum names.
 - **Raw-mode safety** (`internal/audit/browser.go`). Always `defer term.Restore` so a panic or early exit can't leave the terminal in raw mode; degrade gracefully (fall back to the plain dump) if `MakeRaw` fails, mirroring `runTerminal()`'s fallback to `runScanner()`.
 - **Testability boundary** (`internal/audit/audit_test.go`). The raw-mode keypress loop is inherently hard to unit-test; keep it a thin shell and push all cursor/viewport/render-selection logic into pure functions that are fully covered — consistent with the project's "pure helpers are tested, I/O edges are thin" pattern.
+
+## Final Report
+
+Development completed as planned, on top of the audit-log foundation. The reader (`Read`/`Verb`/`WriteJSON`/`WriteText`) and the raw-mode `Browse` live in `internal/audit`; `main.go` wires the auth-free `log` subcommand with the TTY/`-json`/pipe routing. Build, `go vet`, the suite, and `gofmt` all pass; the text and `-json` paths were verified end-to-end against a seeded log via `XDG_CONFIG_HOME`.
+
+### Discovered Insights
+
+- **Insight**: A single `os.Stdin.Read(buf[:3])` cleanly distinguishes a one-byte keypress (`j`) from a three-byte arrow burst (`ESC [ A`) and a lone `Esc` (one byte, `0x1b`) — the terminal delivers an arrow escape as one contiguous read, so no per-byte timeout or `select` is needed. This is what kept the browser dependency-free (no readline/TUI lib).
+  **Context**: `internal/audit/browser.go` — the 3-byte read is the whole trick behind single-keystroke nav on the stdlib + `golang.org/x/term`.
+- **Insight**: The shell's `runTerminal` uses `term.NewTerminal` (line-oriented `ReadLine`), which is unsuitable for j/k — so the browser deliberately uses bare `term.MakeRaw` + manual reads and emits its own `\r\n`/ANSI rather than reusing `crlfWriter`. The reusable precedent was the *pattern* (MakeRaw + defer Restore + graceful fallback), not the code.
+  **Context**: `internal/audit/browser.go` vs `internal/shell/shell.go` — same raw-mode discipline, different input model.
+- **Insight**: `os.UserConfigDir()` honors `$XDG_CONFIG_HOME` before `$HOME/.config`, so testing the `log` subcommand against a fixture requires overriding `XDG_CONFIG_HOME`, not `HOME`. Worth knowing for any future test that exercises the real config-dir path.
+  **Context**: verification of `main.go` `runLog` — the config-dir resolution is XDG-first on Linux.

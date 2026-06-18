@@ -235,8 +235,30 @@ commands (`ls`, `cd`, `pwd`, `get`, `find`) are not logged.
 {"time":"2026-06-18T17:41:02+09:00","op":"upload","name":"report.pdf","id":"0Cd3","parentId":"0Bx","size":900000,"replaced":true,"priorSize":840000,"cwd":"/My Drive/Work"}
 ```
 
-A companion `gdrive-ftp log` command to browse this history interactively is
-planned.
+### Browsing the log
+
+`gdrive-ftp log` opens a small, read-only **`tig`-like browser** over the history
+(no new dependencies — it uses the same terminal library as the interactive
+shell):
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | move down |
+| `k` / `↑` | move up |
+| `g` / `G` | jump to top / bottom |
+| `Enter` | show the selected entry's full detail |
+| `q` / `Esc` / `Ctrl-C` | quit |
+
+It never modifies anything. When stdout is **not** a terminal (piped) or you pass
+`-json`, `gdrive-ftp log` instead prints the entries to stdout — plain rows, or a
+JSON array under `-json` — so scripts and AI agents read the same history without
+the TUI:
+
+```sh
+gdrive-ftp log              # interactive browser (in a terminal)
+gdrive-ftp -json log        # JSON array, for scripts/agents
+gdrive-ftp log | grep trash # plain rows, pipeable
+```
 
 ## Notes & limitations
 
