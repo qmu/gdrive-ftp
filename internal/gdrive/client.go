@@ -253,12 +253,21 @@ func (c *Client) Mkdir(ctx context.Context, parentID, name string) (*drive.File,
 		Do()
 }
 
+// UploadResult reports the outcome of an Upload: the resulting file, and — when
+// the upload overwrote an existing same-named file's content — that prior file
+// (so callers, e.g. the audit log, can record the before state). Replaced is
+// nil when a new file was created.
+type UploadResult struct {
+	File     *drive.File
+	Replaced *drive.File
+}
+
 // Upload streams r into a file named name under parentID. driveID scopes the
 // duplicate-name lookup to a Shared Drive ("" means My Drive). If exactly one
 // non-folder child has that exact name its content is replaced (a new
 // revision); otherwise a new file is created. Requiring a single exact match
 // avoids overwriting a differently-cased or ambiguously-named neighbor.
-func (c *Client) Upload(ctx context.Context, driveID, parentID, name string, r io.Reader) (*drive.File, error) {
+func (c *Client) Upload(ctx context.Context, driveID, parentID, name string, r io.Reader) (*UploadResult, error) {
 	matches, err := c.FindChildren(ctx, driveID, parentID, name)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
@@ -272,20 +281,28 @@ func (c *Client) Upload(ctx context.Context, driveID, parentID, name string, r i
 		}
 	}
 	if files == 1 {
-		return c.srv.Files.Update(target.Id, &drive.File{}).
+		updated, err := c.srv.Files.Update(target.Id, &drive.File{}).
 			Media(r).
 			Fields("id,name,size,mimeType").
 			SupportsAllDrives(true).
 			Context(ctx).
 			Do()
+		if err != nil {
+			return nil, err
+		}
+		return &UploadResult{File: updated, Replaced: target}, nil
 	}
 	f := &drive.File{Name: name, Parents: []string{parentID}}
-	return c.srv.Files.Create(f).
+	created, err := c.srv.Files.Create(f).
 		Media(r).
 		Fields("id,name,size,mimeType").
 		SupportsAllDrives(true).
 		Context(ctx).
 		Do()
+	if err != nil {
+		return nil, err
+	}
+	return &UploadResult{File: created}, nil
 }
 
 // Download streams a binary file's content to w. It must not be called for

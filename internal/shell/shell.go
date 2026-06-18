@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"gdrive-ftp/internal/audit"
 	"gdrive-ftp/internal/gdrive"
 
 	"golang.org/x/term"
@@ -35,14 +36,25 @@ type Shell struct {
 	cwd     []gdrive.Ref // path from the virtual root; empty means the virtual root
 	out     io.Writer
 	jsonOut bool           // emit machine-readable JSON instead of human text
+	log     *audit.Logger  // append-only audit log of mutations; nil disables logging
 	term    *term.Terminal // set only while the interactive line editor is active
 }
 
 // New creates a Shell positioned at the virtual root, which lists My Drive and
 // every accessible Shared Drive. When jsonOut is true, commands emit
-// machine-readable JSON instead of human-formatted text.
-func New(ctx context.Context, c *gdrive.Client, out io.Writer, jsonOut bool) *Shell {
-	return &Shell{ctx: ctx, c: c, out: out, jsonOut: jsonOut}
+// machine-readable JSON instead of human-formatted text. log records mutating
+// operations (a nil log disables audit logging).
+func New(ctx context.Context, c *gdrive.Client, out io.Writer, jsonOut bool, log *audit.Logger) *Shell {
+	return &Shell{ctx: ctx, c: c, out: out, jsonOut: jsonOut, log: log}
+}
+
+// audit records a mutation to the audit log. It is best-effort: a write failure
+// never breaks the command (the mutation already happened) and is surfaced only
+// as a one-line warning on stderr, keeping stdout output clean (e.g. for -json).
+func (s *Shell) audit(e audit.Entry) {
+	if err := s.log.Record(s.ctx, e); err != nil {
+		fmt.Fprintf(os.Stderr, "gdrive-ftp: audit log write failed: %v\n", err)
+	}
 }
 
 // command is a single REPL verb.

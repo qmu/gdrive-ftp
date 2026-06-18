@@ -3,9 +3,9 @@ created_at: 2026-06-18T17:22:15+09:00
 author: a@qmu.jp
 type: enhancement
 layer: [Domain, Infrastructure]
-effort:
-commit_hash:
-category:
+effort: 2h
+commit_hash: f1de6a1
+category: Added
 depends_on:
 ---
 
@@ -108,3 +108,16 @@ Past tickets that touched similar areas:
 - **Bounded disk / capacity plan** (`internal/audit/audit.go`). Rotation is the capacity plan: 5 MB × (1 active + 3 rotated) ≈ 20 MB ceiling, oldest dropped. This is the explicit allowable-loss margin; keep it minimal per "start from the minimum" (Capacity & Recovery Planning).
 - **User sovereignty / opt-out** (`main.go`, `README`). The log is the user's data: a plain file they can read, grep, or delete, and an opt-out (`-no-log`/env) respects users who don't want a local trail. Document retention plainly. Default **on**, since an always-present trail is the whole point of recovering from unwanted agent changes.
 - **Dual reachability** (`internal/audit/audit.go`). The JSONL file is the AI/grep path (the TUI ticket adds the human path over the same data). Keep the schema parseable and stable so an agent can `cat`/`grep` it without the browser — the Accessibility policy treats the agent-reachable path as primary, not an afterthought.
+
+## Final Report
+
+Development completed as planned. The `internal/audit` package owns the schema and writer; the Shell holds a nil-safe `*audit.Logger` so one-shot and interactive paths log identically through one seam; the three mutators record after success. Build, `go vet`, the suite, and `gofmt` all pass; `-no-log` confirmed in `-h`.
+
+### Discovered Insights
+
+- **Insight**: A `put` that overwrites does an `Files.Update` on the *same* file id, so the "replaced" file's id equals the result's id — the only meaningful before/after signal is the **size**. The schema models this as `replaced: bool` + `priorSize`, not a redundant `replacedId`, which would have duplicated `id` and misled readers into thinking a different object was involved.
+  **Context**: `internal/gdrive/client.go` `Upload`/`UploadResult` and `internal/audit` `Entry` — the overwrite case is a content revision, not a file swap.
+- **Insight**: The best-effort warning on a failed log write must go to **`os.Stderr`**, not `s.out` — writing it to `s.out` would corrupt the single-JSON-value stdout contract under `-json`. This is the one place the shell deliberately bypasses its `out` writer.
+  **Context**: `internal/shell/shell.go` `audit()` helper — stdout stays machine-clean; warnings are stderr-only.
+- **Insight**: A nil `*audit.Logger` is a valid no-op logger (method on nil receiver guarded by `if l == nil`), so `-no-log`, completion, and tests all pass `nil` without any interface or wrapper — simpler than a consumer-side `auditLogger` interface, which the ticket suggested but proved unnecessary since the mutator path can't be unit-tested anyway (no client fake).
+  **Context**: `internal/audit/audit.go` `Record` + `internal/shell` — the nil-receiver pattern removed a layer of indirection.

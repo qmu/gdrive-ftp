@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 
+	"gdrive-ftp/internal/audit"
 	"gdrive-ftp/internal/auth"
 	"gdrive-ftp/internal/gdrive"
 	"gdrive-ftp/internal/shell"
@@ -29,6 +30,7 @@ func main() {
 	creds := flag.String("creds", defaultCredsPath(), "path to OAuth client credentials.json")
 	token := flag.String("token", defaultTokenPath(), "path to the cached auth token")
 	jsonOut := flag.Bool("json", false, "emit machine-readable JSON output")
+	noLog := flag.Bool("no-log", false, "disable the audit log of Drive mutations")
 	flag.Usage = usage
 	flag.Parse()
 	args := flag.Args()
@@ -70,7 +72,11 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	sh := shell.New(ctx, client, os.Stdout, *jsonOut)
+	var auditLog *audit.Logger
+	if !*noLog {
+		auditLog = audit.New(defaultLogPath())
+	}
+	sh := shell.New(ctx, client, os.Stdout, *jsonOut, auditLog)
 
 	// One-shot mode: any positional args form a single command.
 	if args := flag.Args(); len(args) > 0 {
@@ -107,7 +113,7 @@ func completeForShell(ctx context.Context, creds, token string, words []string) 
 	if err != nil {
 		return
 	}
-	sh := shell.New(ctx, client, os.Stdout, false) // completion output is never JSON
+	sh := shell.New(ctx, client, os.Stdout, false, nil) // completion: never JSON, never logs
 	for _, c := range sh.Complete(words) {
 		fmt.Println(c)
 	}
@@ -161,4 +167,10 @@ func defaultCredsPath() string {
 
 func defaultTokenPath() string {
 	return filepath.Join(configDir(), "token.json")
+}
+
+// defaultLogPath is the append-only audit log of Drive mutations, kept beside
+// the token under the config dir.
+func defaultLogPath() string {
+	return filepath.Join(configDir(), "audit.jsonl")
 }
